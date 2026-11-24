@@ -38,7 +38,7 @@ import { mountTasks } from './tasks.js'
 import { mountPermissions, sanitiseSuggestions, redactPermission } from './permissions.js'
 import { createPermissionNotifier } from './permission-notify.js'
 import { mountHealth, readVersion } from './health.js'
-import { readPort, readUiPort, readHost, loadOfficeConfig, bossFromConfig } from './config.js'
+import { readPort, readUiPort, readHost, loadOfficeConfig, bossFromConfig, staffFromConfig } from './config.js'
 import { agentTranscriptPath, readTranscript, isTranscriptPath, clampLine } from './transcript.js'
 import {
   readLanConfig, lanHostOk, lanOriginOk, viewerKeyFrom, viewerKeyMatches, viewerLink, renderQr,
@@ -2001,7 +2001,8 @@ const tasks = mountTasks(app, {
  * renders: the port and host it is bound to, the boss from
  * office.config.json (the file's fields over the defaults; `configFile` is
  * the path that was read, or null when there is none and `boss` is all
- * defaults, so the page keeps its bundled values then) and the version.
+ * defaults, so the page keeps its bundled values then), the resident staff
+ * roster (shared/staff.js; [] when switched off) and the version.
  * Open, like GET /health: nothing here that http://127.0.0.1:<port>/ does
  * not already show.
  */
@@ -2013,6 +2014,7 @@ app.get('/config', (_req, res) => {
     port: bound?.port || PORT,
     host: bound?.address || '127.0.0.1',
     boss: bossFromConfig(config),
+    staff: staffFromConfig(config),
     configFile: file,
     version: VERSION,
   })

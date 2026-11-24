@@ -681,6 +681,21 @@
       "pushFailed": "push failed",
       "pushFailedOf": "push of {target} failed",
       "why": ": {why}"
+    },
+    "staff": {
+      "arrived": "in the office",
+      "lunch": "taking it easy in the lunch room",
+      "chat": "chatting with a colleague",
+      "coffee": "coffee break ☕",
+      "water": "grabbing some water 💧",
+      "desk": "relaxing at a spare desk",
+      "wander": "stretching the legs",
+      "printer": "picking up a printout",
+      "rounds": "checking in on {name}",
+      "reporting": "reporting to {name}",
+      "whiteboard": "planning at the whiteboard",
+      "calledIn": "called in: {task}",
+      "offDuty": "job done, back to the office routine"
     }
   },
   "chatter": {

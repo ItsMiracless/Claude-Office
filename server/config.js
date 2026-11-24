@@ -21,7 +21,9 @@
  */
 
 import { existsSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
+import { staffRoster } from '../shared/staff.js'
 
 export const DEFAULT_PORT = 3334
 export const DEFAULT_UI_PORT = 3333
@@ -172,4 +174,26 @@ export function bossFromConfig(config = {}) {
     color:  textField(boss.color, 32)  ?? DEFAULT_BOSS.color,
     emoji:  textField(boss.emoji, 16)  ?? DEFAULT_BOSS.emoji,
   }
+}
+
+/** The default resident staff (shared/resident-staff.json), [] when it cannot be read. */
+export function defaultStaff(log = console) {
+  const file = join(dirname(fileURLToPath(import.meta.url)), '..', 'shared', 'resident-staff.json')
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    return Array.isArray(parsed) ? parsed : []
+  } catch (err) {
+    log?.warn?.(`[config] ${file} could not be read (${err.message}); no resident staff`)
+    return []
+  }
+}
+
+/**
+ * The resident staff the page should seat (shared/staff.js): office.config.json's
+ * `staff` field over the default roster; [] when it is switched off.
+ * @param {object} [config] the parsed office.config.json
+ * @param {unknown[]} [fallback] the default roster
+ */
+export function staffFromConfig(config = {}, fallback = defaultStaff()) {
+  return staffRoster(config && typeof config === 'object' ? config.staff : undefined, fallback)
 }

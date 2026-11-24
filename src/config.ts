@@ -25,9 +25,10 @@
 
 import { officeHttpBase } from './serverUrl'
 import { officeAuthHeaders } from './officeAuth'
+import type { StaffMember } from '../shared/staff.js'
 
 // Shape of the optional office.config.json
-type UserConfig = { boss?: { name?: string; sprite?: string; color?: string; emoji?: string } }
+type UserConfig = { boss?: { name?: string; sprite?: string; color?: string; emoji?: string }; staff?: unknown }
 
 /** The boss fields GET /config returns (server/config.js bossFromConfig). */
 export interface BossConfig { name: string; sprite: string; color: string; emoji: string }
@@ -37,6 +38,9 @@ export interface BossConfig { name: string; sprite: string; color: string; emoji
 // missing, so no top-level await is needed (the build target rejects it).
 const userConfigModules = import.meta.glob<UserConfig>('../office.config.json', { eager: true, import: 'default' })
 const userConfig: UserConfig = Object.values(userConfigModules)[0] ?? {}
+
+/** office.config.json's `staff` setting as bundled (src/residentStaff.ts starts from it) */
+export const BUILD_TIME_STAFF_SETTING: unknown = userConfig.staff
 
 const bossName   = userConfig.boss?.name   ?? 'Boss'
 const bossSprite = userConfig.boss?.sprite ?? 'Me-1'
@@ -120,6 +124,8 @@ export interface RuntimeConfig {
   /** The office.config.json the server read, or null when it has none (then `boss` is all defaults) */
   configFile: string | null
   version: string
+  /** The resident staff roster the server read (shared/staff.js); [] when switched off */
+  staff?: StaffMember[]
 }
 
 export interface LoadRuntimeConfigOptions {
@@ -157,6 +163,7 @@ export async function loadRuntimeConfig({
       boss: { ...BUILD_TIME_BOSS, ...body.boss },
       configFile: typeof body.configFile === 'string' ? body.configFile : null,
       version: typeof body.version === 'string' ? body.version : '',
+      ...(Array.isArray(body.staff) ? { staff: body.staff } : {}),
     }
   } catch {
     return null

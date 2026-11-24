@@ -9,6 +9,7 @@ import SpeechBubble from './SpeechBubble'
 import ResilientImg from './ResilientImg'
 import EffectBubble from './EffectBubble'
 import { getEffect } from '../agentManager'
+import { staffMember, staffLabel } from '../residentStaff'
 import { ROLE_TO_CHAR, BOSS_ROLE } from '../config'
 import { getSpritePath, useTheme } from '../theme'
 import { useVariant } from '../incident'
@@ -242,7 +243,11 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
   const stateLabel = needsYou
     ? `${needsYouShort(needsYou.kind)}${projectTag ? ` · ${projectTag}` : ''}`
     : mainState === 'error' ? `${tr('ui.character.apiError')}${projectTag ? ` · ${projectTag}` : ''}` : null
-  const tooltip = [agent.name, projectTag, main && agent.statusText ? `— ${agent.statusText}` : null].filter(Boolean).join(' ')
+  // Resident staff (src/residentStaff.ts): "Valen · AirBNB — coffee break" and a name tag, idle or at work
+  const staff = staffMember(agent.staffType)
+  const tooltip = staff
+    ? [staffLabel(staff), agent.statusText ? `— ${agent.statusText}` : null].filter(Boolean).join(' ')
+    : [agent.name, projectTag, main && agent.statusText ? `— ${agent.statusText}` : null].filter(Boolean).join(' ')
 
   return (
     <div
@@ -253,7 +258,7 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
         transform: 'translate(-50%, -100%)',
         zIndex: speaking ? SPEAKING_Z : zIndex ?? Math.round(agent.position.y),
       }}
-      title={projectTag || main ? tooltip : undefined}
+      title={projectTag || main || staff ? tooltip : undefined}
       data-main-state={mainState}
     >
       {effectSrc && <EffectBubble src={effectSrc} alt={agent.state} />}
@@ -267,6 +272,9 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
       ) : scene?.kind === 'shipping' ? (
         // The label names what ships (the target, else the project), so it stands in for the project tag
         <div className="char-scene">{scene.label ?? tr('ui.character.shipping')}</div>
+      ) : staff ? (
+        // Resident staff wear their name, with the project while they work for one
+        <div className="char-project char-staff">{projectTag ? `${staff.name} · ${projectTag}` : staff.name}</div>
       ) : projectTag && (
         <div className="char-project">{projectTag}</div>
       )}

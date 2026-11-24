@@ -272,6 +272,8 @@ describe('GET /config and the port-derived surfaces (AGENT_OFFICE_PORT=4000)', (
       boss: { name: 'Boss', sprite: 'Me-1', color: '#ff4444', emoji: '👑' },
       configFile: null,
       version: expect.stringMatching(/^\d+\.\d+\.\d+/),
+      // the default resident staff roster (shared/resident-staff.json)
+      staff: expect.arrayContaining([expect.objectContaining({ agentType: 'elaine', name: 'Elaine', manager: true })]),
     })
   })
 

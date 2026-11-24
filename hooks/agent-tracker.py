@@ -602,17 +602,20 @@ NAME_MAP = {
 # Owner's own subagents (ItsMiracless/claude-workspace, .claude/agents/).
 # Each one borrows an existing desk/sprite role but keeps its own name in the
 # office, so a translation job never shows up as "Debugger" because its task
-# happened to mention a bug.
+# happened to mention a bug. The same list, with each one's short title, is
+# the office's resident staff (shared/resident-staff.json; a test keeps the
+# two in step).
 CUSTOM_AGENTS = {
-    'pajak-analis-data':       ('database-architect',   'Analis Pajak'),
-    'pajak-riset-regulasi':    ('architect-reviewer',   'Riset Pajak'),
-    'pajak-sp2dk-pemeriksaan': ('security-auditor',     'SP2DK'),
-    'airbnb-analis':           ('performance-engineer', 'AirBNB'),
-    'penerjemah-pajak':        ('prompt-engineer',      'Penerjemah Pajak'),
-    'penerjemah-airbnb':       ('fullstack-developer',  'Host AirBNB'),
-    'website-maintainer':      ('devops-engineer',      'Web Ops'),
-    'ui-ux-designer':          ('frontend-developer',   'UI/UX Designer'),
-    'backend-senior-engineer': ('code-reviewer',        'Backend Engineer'),
+    'pajak-analis-data':       ('database-architect',   'Bebong'),
+    'pajak-riset-regulasi':    ('architect-reviewer',   'Ricky'),
+    'pajak-sp2dk-pemeriksaan': ('security-auditor',     'Robin'),
+    'airbnb-analis':           ('performance-engineer', 'Valen'),
+    'penerjemah-pajak':        ('prompt-engineer',      'Christia'),
+    'penerjemah-airbnb':       ('fullstack-developer',  'Celine'),
+    'website-maintainer':      ('devops-engineer',      'Dion'),
+    'ui-ux-designer':          ('frontend-developer',   'Adel'),
+    'backend-senior-engineer': ('code-reviewer',        'Linglong'),
+    'elaine':                  ('ai-engineer',          'Elaine'),
 }
 
 def name_for(subagent_type, role):

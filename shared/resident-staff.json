@@ -1,0 +1,12 @@
+[
+  { "agentType": "elaine",                  "name": "Elaine",   "title": "Kepala Tim",       "role": "ai-engineer",          "manager": true },
+  { "agentType": "pajak-analis-data",       "name": "Bebong",   "title": "Analis Pajak",     "role": "database-architect" },
+  { "agentType": "pajak-riset-regulasi",    "name": "Ricky",    "title": "Riset Pajak",      "role": "architect-reviewer" },
+  { "agentType": "pajak-sp2dk-pemeriksaan", "name": "Robin",    "title": "SP2DK",            "role": "security-auditor" },
+  { "agentType": "airbnb-analis",           "name": "Valen",    "title": "AirBNB",           "role": "performance-engineer" },
+  { "agentType": "penerjemah-pajak",        "name": "Christia", "title": "Penerjemah Pajak", "role": "prompt-engineer" },
+  { "agentType": "penerjemah-airbnb",       "name": "Celine",   "title": "Host AirBNB",      "role": "fullstack-developer" },
+  { "agentType": "website-maintainer",      "name": "Dion",     "title": "Web Ops",          "role": "devops-engineer" },
+  { "agentType": "ui-ux-designer",          "name": "Adel",     "title": "UI/UX Designer",   "role": "frontend-developer" },
+  { "agentType": "backend-senior-engineer", "name": "Linglong", "title": "Backend Engineer", "role": "code-reviewer" }
+]

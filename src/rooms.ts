@@ -373,6 +373,8 @@ export const ROOMS: Record<RoomId, Room> = {
       { id: 'meet-6', type: 'meeting-seat', x: 52.0, y: 70.3, facing: 'up', spriteFacing: 'rear-left', zIndex: 61 },
       { id: 'meet-7', type: 'meeting-seat', x: 57.5, y: 66.5, facing: 'up', spriteFacing: 'rear-left', zIndex: 62 },
       { id: 'meet-8', type: 'meeting-seat', x: 63.0, y: 62.6, facing: 'up', spriteFacing: 'rear-left', zIndex: 63 },
+      // By the whiteboard: where the resident staff's team lead plans and works (src/residentStaff.ts)
+      { id: 'meet-board', type: 'standing', x: 47.0, y: 47.6, facing: 'up', spriteFacing: 'rear-left', zIndex: 36 },
     ],
     entryPoint: { x: 68, y: 51.5 },
     walkableArea: [{ x: 43.8, y: 37.0 }, { x: 93.0, y: 63.9 }, { x: 53.7, y: 93.1 }, { x: 5.9, y: 63.4 }],

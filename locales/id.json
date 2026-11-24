@@ -683,6 +683,21 @@
       "pushFailed": "push gagal",
       "pushFailedOf": "push {target} gagal",
       "why": ": {why}"
+    },
+    "staff": {
+      "arrived": "sudah di kantor",
+      "lunch": "santai di ruang makan",
+      "chat": "ngobrol dengan rekan kerja",
+      "coffee": "rehat kopi ☕",
+      "water": "ambil air minum 💧",
+      "desk": "duduk santai di meja kosong",
+      "wander": "jalan-jalan sebentar",
+      "printer": "ambil hasil cetakan",
+      "rounds": "mengecek {name}",
+      "reporting": "lapor ke {name}",
+      "whiteboard": "menyusun rencana di whiteboard",
+      "calledIn": "dipanggil kerja: {task}",
+      "offDuty": "tugas selesai, kembali ke rutinitas kantor"
     }
   },
   "chatter": {

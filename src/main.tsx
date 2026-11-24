@@ -6,6 +6,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { loadRuntimeConfig } from './config'
+import { setStaffRoster } from './residentStaff'
 
 function render() {
   ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -30,4 +31,5 @@ const params = new URLSearchParams(window.location.search)
 const phoneWithoutSecret = isPhoneFullPage && pagePhoneSecret === null
 const standalone = params.has('sim') || params.has('video') || !!viewerKey || !mayCarryOfficeToken(window.location) || phoneWithoutSecret
 const ready = standalone ? Promise.resolve(null) : loadRuntimeConfig()
-ready.then(render, render)
+// The server's resident staff roster (office.config.json, read on every request) over the bundled one
+ready.then(config => { if (config?.staff) setStaffRoster(config.staff) }).then(render, render)

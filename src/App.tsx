@@ -62,6 +62,7 @@ import { openRoomSet, previewAllRooms } from './roomAccess'
 import { roomOf, TRANSFER_MAX_MS } from './roomTransfer'
 import { switcherModel, viewableRoom } from './roomSwitcher'
 import { startRoomsDemo } from './roomsDemo'
+import { initialStaff, isIdleStaff } from './residentStaff'
 
 // ---------------------------------------------------------------------------
 // Placement helper — loaded via ?helper query param
@@ -330,7 +331,11 @@ const App: React.FC = () => {
   // Live: the boss alone until the server names a session — each terminal
   // then gets its own Claude (officeReducer ensureClaude). ?sim / ?video have
   // no sessions, so the decorative Claude keeps its desk there.
-  if (officeRef.current === null) officeRef.current = initialOfficeState(isSimMode ? [createBoss(), createClaude()] : [createBoss()], Date.now())
+  // The resident staff (src/residentStaff.ts) are in the building from the first frame, live and under ?sim
+  if (officeRef.current === null) {
+    const permanent = isSimMode ? [createBoss(), createClaude()] : [createBoss()]
+    officeRef.current = initialOfficeState([...permanent, ...initialStaff(permanent, ROOMS_IN_USE, Math.random, Date.now())], Date.now())
+  }
   const [agents, setAgents] = useState<Agent[]>(() => officeRef.current!.agents)
   // Always officeRef.current.agents — for callbacks that only need the roster
   const agentsRef = useRef<Agent[]>(officeRef.current.agents)
@@ -1679,7 +1684,8 @@ const App: React.FC = () => {
                 zIndex={zOverride}
                 isTyping={typingAgents.has(agent.id)}
                 showProject={activeSessionCount > 1}
-                onClick={handleCharacterClick}
+                // Idle resident staff are nobody the server knows: nothing to inspect
+                onClick={isIdleStaff(agent) ? undefined : handleCharacterClick}
                 inspected={agent.id === inspectedId}
               />
             )

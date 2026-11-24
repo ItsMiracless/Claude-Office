@@ -15,6 +15,7 @@ Everything the [README](../README.md) leaves out: how the hooks work, every sett
 - [Sound](#sound)
 - [End-of-day recap](#end-of-day-recap)
 - [Incident mode — Prod Is Down](#incident-mode--prod-is-down)
+- [Resident staff](#resident-staff)
 - [Agent-to-agent messages](#agent-to-agent-messages)
 - [Desktop app (Electron)](#desktop-app-electron)
 - [Configuration](#configuration)
@@ -406,13 +407,29 @@ The office persists one small row per day in `chat.db` (`daily_stats`, `server/r
 
 ## Incident mode — "Prod Is Down"
 
-The office declares an incident **by itself** when real failures happen: a deploy that fails (a `deploy_fail` [signal](#connect-claude-code) — `vercel deploy`, `fly deploy`, `kubectl apply`, ... exiting non-zero) switches it on at once, and three failed tool calls (`PostToolUseFailure`) inside five minutes do too — a failed build or test run counts as one under its own name (*tests failed in api: 3 failing*), never twice. A `deploy-fail` or `who-broke-build` random event starts a 90 s mini-incident instead, and `/incident` in the chat declares one by hand (relayed to every open office).
+The office declares an incident **by itself** when real failures happen: a deploy that fails (a `deploy_fail` [signal](#connect-claude-code) — `vercel deploy`, `fly deploy`, `kubectl apply`, ... exiting non-zero) switches it on at once, and three failed tool calls (`PostToolUseFailure`) inside five minutes do too — a failed build or test run counts as one under its own name (*tests failed in api: 3 failing*), never twice. A `deploy-fail` or `who-broke-build` random event starts a 90 s mini-incident instead (only while at least one session is active, or under `?sim`: an empty office has no prod to take down), and `/incident` in the chat declares one by hand (relayed to every open office).
 
 While it is on, the room is forced to night and tinted red, a beacon flashes over the door, the wall TV shows the rollback status page, the "days since last incident" sign flips to 0, agents whose last tool call failed carry a build-failed bubble, the chat header shows a live incident timer, and the spawn / working / done / boss lines come from an incident pool.
 
-It ends with `/all-clear`, ten minutes without a new failure, a deploy that goes out (`deploy_success`), the last red build or test run going green again (`build_ok` / `test_ok`), or a `deploy-success` random event during a mini-incident, and posts a one-line postmortem (duration, failures by tool, who was involved, and the root cause — the last named failure, such as *deploy of api failed: Error: 503*, else the last failing tool). A green run while no incident is on clears the five-minute failure window instead. The sign then counts the days from `localStorage['agent-office-last-incident']`. `?variant=incident` pins it on with auto-exit off, for screenshots. Incident mode is a *variant*, so it stacks with the Dunder Mifflin skin.
+It ends with `/all-clear`, ten minutes without a new failure, a deploy that goes out (`deploy_success`), the last red build or test run going green again (`build_ok` / `test_ok`), or a `deploy-success` random event during a mini-incident, and posts a one-line postmortem (duration, failures by tool, who was involved, and the root cause — the last named failure, such as *deploy of api failed: Error: 503*, else the last failing tool). A green run while no incident is on clears the five-minute failure window instead. The sign then counts the days from `localStorage['agent-office-last-incident']`. A reload keeps a real incident with the deadline it already had (`agent-office-variant-until`); a mini-incident, or an incident stored without a deadline or past it, is not brought back. `?variant=incident` pins it on with auto-exit off, for screenshots. Incident mode is a *variant*, so it stacks with the Dunder Mifflin skin.
 
 The dedicated incident art (beacon frames, pizza tower, incident board, per-role props) is a follow-up: `src/incidentAssets.ts` lists the slots and today's fallbacks, and `public/sprites/incident/README.md` lists the files to draw. The office picks them up with no code change.
+
+## Resident staff
+
+Your own subagents can be **staff**: always in the office, whether or not they have work. The roster is `shared/resident-staff.json` (each entry: `agentType` — the `subagent_type` Claude Code reports — `name`, a short `title`, the `role` whose desk and sprite it borrows, and `manager: true` for a team lead). `hooks/agent-tracker.py` names the same subagents in its `CUSTOM_AGENTS`; a test keeps the two in step.
+
+While a staff member has nothing to do it lives its own office life (`src/residentStaff.ts`): the lunch room, a chat at a table next to a colleague, coffee or water, a sit at a spare desk (always leaving three desks free, and getting up at once when real work is given that desk), the printer, a stroll. The team lead does rounds of whoever is working instead, reports to the boss and plans at the meeting room's whiteboard. None of this reaches the server: an idle staff member's id is `staff-<agentType>`, so it is never a session, a worker, payroll or an incident, and random office events leave it alone.
+
+When Claude Code really runs that subagent (an `agent_spawned`, or a snapshot entry, whose `agentType` is on the roster) the **same character** takes the real agent's id, walks from wherever it is to a free desk (the team lead to the whiteboard when the meeting room is open) and works like any worker, with the real task and status lines. On `agent_completed` it gives the desk up and goes back to its routine instead of leaving the building. A second run of the same subagent while the first is working, and every subagent not on the roster, walk in and out as before.
+
+Configure it in `office.config.json` (read by the server on every page load, `GET /config` → `staff`; bundled for `?sim`):
+
+```json
+{ "staff": false }
+```
+
+switches it off; `"staff": [ { "agentType": "my-agent", "name": "Ana", "title": "Research", "role": "architect-reviewer" } ]` (or `{ "members": [...] }`) replaces the roster.
 
 ## Rooms
 

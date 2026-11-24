@@ -44,7 +44,7 @@
  */
 
 import { Agent, AgentScene, type EffectKind, OfficeEvent, Position, SignalEvent, SnapshotAgent, ServerHealth, SessionInfo, SessionMain, MainState, NeedsYou, AGENT_CONFIGS } from './types'
-import { ROOMS, AgentSpot, HUB_ROOM, OFFICE_ROOM, getFreeSpot, type RoomId } from './rooms'
+import { ROOMS, AgentSpot, HUB_ROOM, OFFICE_ROOM, getFreeSpot, findSpot, type RoomId } from './rooms'
 import {
   beginTransfer, stepTransfer, settleTransfer, planRoomMoves, heldSpotIds, roomOf, inOffice,
   FRONT_DOOR, standInside, type Transfer,
@@ -73,6 +73,10 @@ import { getVariant, pickIncidentLine } from './incident'
 import { isSignalKind, signalFamily, signalOutcome, signalWhere, SCENE_MS } from './signals'
 import { clientLabel } from './tools'
 import { t, list } from './i18n'
+import {
+  isIdleStaff, staffMember, staffAgentId, staffWorkSpot, pickStaffActivity, staffDwellMs, staffSettledState,
+  type StaffKind, type StaffMember,
+} from './residentStaff'
 
 // ---------------------------------------------------------------------------
 // Room constants
@@ -170,6 +174,9 @@ export interface AgentMeta {
   mcpBusy?: string[]
   /** An MCP server worker: when its last call finished (null while one is running); stamps its `mcp_worker_leave` */
   mcpIdleSince?: number | null
+  /** Resident staff with nothing to do (src/residentStaff.ts): what it is doing, and when it picks the next thing */
+  staffDoing?: StaffKind
+  staffNextAt?: number
 }
 
 /** An agent_working that arrived before the agent reached its desk (C13) */
@@ -321,7 +328,9 @@ function without<T>(record: Record<string, T>, id: string): Record<string, T> {
  * free): their own desks, and the seats visitors hold in other rooms.
  */
 function occupiedSpotIds(agents: Agent[]): Set<string> {
-  return heldSpotIds(agents)
+  // A desk an idle resident staff member is only sitting at is free for real
+  // work: it gets up for whoever is given it (stepOffice, stepIdleStaff)
+  return heldSpotIds(agents.filter(a => !isIdleStaff(a)))
 }
 
 /** The filing cabinet for browsing roles when it is free, otherwise the first free desk */
@@ -496,6 +505,8 @@ interface SpawnFields {
   preferredSpotId?: string
   statusText?: string
   model?: string
+  /** The subagent_type: a resident staff member's spawn is that member going to work */
+  agentType?: string
 }
 
 /**
@@ -511,6 +522,11 @@ interface SpawnFields {
 function spawnAgent(state: OfficeState, raw: SpawnFields, env: OfficeEnv, announce: boolean): OfficeResult {
   const id = raw.id ?? `agent-${env.now}`
   if (state.agents.some(a => a.id === id)) return { state, effects: [] }
+
+  // A resident staff member with nothing to do: that same character goes to work
+  const member = staffMember(raw.agentType)
+  const idleStaff = member ? state.agents.find(a => a.id === staffAgentId(member.agentType)) : undefined
+  if (member && idleStaff) return claimStaff(state, idleStaff, member, { ...raw, id }, env, announce)
 
   const name = raw.name ?? 'Agent'
   const role = raw.role ?? 'general-purpose'
@@ -572,6 +588,107 @@ function spawnAgent(state: OfficeState, raw: SpawnFields, env: OfficeEnv, announ
 }
 
 /**
+ * A resident staff member is called in (src/residentStaff.ts): it takes the
+ * real agent's id and walks from wherever it is to a free desk (the team lead
+ * to the meeting room's whiteboard), or to the lobby when every desk is taken.
+ * The spawn line and the pending status work as for any new worker.
+ */
+function claimStaff(state: OfficeState, staff: Agent, member: StaffMember, raw: SpawnFields & { id: string }, env: OfficeEnv, announce: boolean): OfficeResult {
+  const id = raw.id
+  const others = state.agents.filter(a => a.id !== staff.id)
+  const effects: OfficeEffect[] = []
+  const task = raw.task
+  if (announce) {
+    effects.push({ kind: 'msg', sender: staff.name, role: staff.role, color: cfgFor(staff.role).color, text: task ? (env.live ? `📋 ${task}` : `starting: ${task}`) : spawnMessage() })
+  }
+  let agent: Agent = {
+    ...staff,
+    id,
+    task,
+    sessionId: raw.sessionId,
+    project: raw.project,
+    unread: raw.unread || undefined,
+    ...(raw.model ? { model: raw.model } : {}),
+    visitSpotId: undefined,
+    effectKind: undefined,
+    lastFailed: undefined,
+    statusText: raw.statusText ?? (task ? t('ui.staff.calledIn', { task: summarise(task) ?? task }) : spawnMessage()),
+  }
+  let meta: AgentMeta = newMeta(env.now)
+  let lobby = state.lobby
+  const place = staffWorkSpot(member, others, env.openRooms, () => pickSpot(others, staff.role))
+  if (place) {
+    const desk = { x: place.spot.x, y: place.spot.y }
+    agent = { ...agent, assignedRoom: place.room, assignedSpotId: place.spot.id, deskPosition: desk, spriteFacing: place.spot.spriteFacing }
+    const moving = beginTransfer(agent, place.room, desk, 'return', env)
+    agent = { ...moving.agent, state: 'changing-room' }
+    meta = { ...meta, transfer: moving.transfer }
+  } else {
+    const slot = freeLobbySlot(state)
+    const pos = lobbyPosition(slot)
+    agent = { ...agent, assignedRoom: OFFICE_ROOM, assignedSpotId: undefined, deskPosition: pos, state: 'waiting', statusText: t('ui.office.waitingForDesk') }
+    const moving = beginTransfer(agent, OFFICE_ROOM, pos, 'arrive', env)
+    agent = moving.agent
+    meta = { ...meta, lobbySlot: slot, transfer: moving.transfer }
+    lobby = [...lobby, id]
+  }
+  const pendingStatus = raw.status
+    ? { ...state.pendingStatus, [id]: { status: raw.status, failed: false } }
+    : state.pendingStatus
+  return {
+    state: {
+      ...state,
+      agents: state.agents.map(a => (a.id === staff.id ? agent : a)),
+      lobby,
+      meta: { ...without(state.meta, staff.id), [id]: meta },
+      pendingStatus,
+    },
+    effects,
+  }
+}
+
+/**
+ * A resident staff member's job is done: it gives up its desk and the real
+ * agent's id and, where it stands, goes back to its office routine.
+ */
+function releaseStaff(state: OfficeState, agent: Agent, member: StaffMember, effects: OfficeEffect[], env: OfficeEnv): OfficeResult {
+  const sid = staffAgentId(member.agentType)
+  const here = { ...agent.position }
+  const back: Agent = {
+    ...agent,
+    id: sid,
+    state: 'idle',
+    task: member.title,
+    statusText: t('ui.staff.offDuty'),
+    sessionId: undefined,
+    project: undefined,
+    unread: undefined,
+    model: undefined,
+    lastFailed: undefined,
+    scene: undefined,
+    callout: undefined,
+    effectKind: undefined,
+    assignedRoom: OFFICE_ROOM,
+    assignedSpotId: undefined,
+    visitSpotId: undefined,
+    position: here,
+    targetPosition: here,
+    deskPosition: here,
+    pathQueue: [],
+  }
+  return {
+    state: {
+      ...state,
+      agents: state.agents.map(a => (a.id === agent.id ? back : a)),
+      lobby: state.lobby.filter(x => x !== agent.id),
+      pendingStatus: without(state.pendingStatus, agent.id),
+      meta: { ...without(state.meta, agent.id), [sid]: { ...newMeta(env.now), staffNextAt: env.now + 2_000 + Math.floor(env.random() * 3_000) } },
+    },
+    effects,
+  }
+}
+
+/**
  * Walk an agent out to the door. `quiet` skips the celebration and boss reply
  * (used when a snapshot tells us the agent left while we were disconnected).
  * `stats` are what the Agent tool reported (tokens, duration): they make the
@@ -583,6 +700,9 @@ function completeAgent(
 ): OfficeResult {
   const agent = state.agents.find(a => a.id === id)
   if (!agent || agent.state === 'completed') return { state, effects: [] }
+  // Resident staff never leave the building; one with nothing to do has nothing to finish
+  const member = staffMember(agent.staffType)
+  if (member && isIdleStaff(agent)) return { state, effects: [] }
 
   const effects: OfficeEffect[] = []
   const resultMsg = result ?? doneMessage()
@@ -599,6 +719,7 @@ function completeAgent(
     effects.push({ kind: 'msg', sender: boss.title, role: BOSS_ROLE, color: boss.color, text: bossReply(agent.name, env.random) })
   }
   if (agent.assignedSpotId === 'spot-filing') effects.push({ kind: 'furniture', id: 'filing-1', state: 'closed' })
+  if (member) return releaseStaff(state, agent, member, effects, env)
 
   let leaving: Agent = {
     ...agent,
@@ -1165,7 +1286,7 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
           }
           continue
         }
-        if (a.id === BOSS_ID || a.id === CLAUDE_ID || isMainAgent(a) || a.state === 'completed' || byId.has(a.id)) continue
+        if (a.id === BOSS_ID || a.id === CLAUDE_ID || isMainAgent(a) || isIdleStaff(a) || a.state === 'completed' || byId.has(a.id)) continue
         const r = completeAgent(cur, a.id, t('ui.office.clockedOutAway'), env, true)
         cur = r.state
         effects.push(...r.effects)
@@ -1322,7 +1443,9 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
         msgSender = c.title; msgRole = CLAUDE_ROLE; msgColor = c.color
       } else if (role && AGENT_CONFIGS[role]) {
         const c = AGENT_CONFIGS[role]
-        msgSender = c.title; msgRole = role; msgColor = c.color
+        // A resident staff member keeps its own name ("Ricky", not the role's "Architect")
+        const own = state.agents.some(x => x.staffType && x.role === role && x.name === sender)
+        msgSender = own ? sender : c.title; msgRole = role; msgColor = c.color
       } else {
         // Attribute to a working agent or fall back to Claude
         const workers = state.agents.filter(a => a.id !== BOSS_ID && a.role !== CLAUDE_ROLE && a.state === 'working' && a.type !== 'mcp')
@@ -1694,6 +1817,54 @@ export function stepOffice(state: OfficeState, dt: number, env: OfficeEnv): Step
   // a break in the same frame cannot be given the same one (filled on first use)
   let lunchTaken: Set<string> | null = null
 
+  // Resident staff with nothing to do (src/residentStaff.ts). Settled at an
+  // activity: when its time there is up, pick the next one and walk over
+  // (through the corridor when it is in another room). Walking in its room:
+  // step along the path and settle on arrival.
+  const staffMoves: Agent[] = []
+  const settleStaff = (agent: Agent, m: AgentMeta, patch: Partial<AgentMeta> = {}): Agent => {
+    const kind = m.staffDoing ?? 'wander'
+    const settled = staffSettledState(kind)
+    setMeta(agent.id, { ...patch, staffNextAt: now + staffDwellMs(kind, env.random) })
+    const seat = agent.visitSpotId ? findSpot(agent.visitSpotId)?.spot : undefined
+    return { ...agent, state: settled.state, effectKind: settled.effectKind, spriteFacing: seat?.spriteFacing ?? agent.spriteFacing, pathQueue: [] }
+  }
+  const stepIdleStaff = (agent: Agent, m: AgentMeta): Agent => {
+    if (agent.state === 'changing-room') {
+      const queue = agent.pathQueue ?? []
+      const { position, arrived } = stepToward(agent.position, queue[0] ?? agent.targetPosition, speed)
+      changed = true
+      if (!arrived) return { ...agent, position }
+      if (queue.length > 0) return { ...agent, position, pathQueue: queue.slice(1) }
+      return settleStaff({ ...agent, position }, m)
+    }
+    // Sitting at a desk somebody has just been given for real work: up and off at once
+    const bumped = !!agent.visitSpotId && state.agents.some(o => o.id !== agent.id && o.assignedSpotId === agent.visitSpotId)
+    if (m.staffNextAt === undefined && !bumped) {
+      setMeta(agent.id, { staffNextAt: now + 2_000 + Math.floor(env.random() * 15_000) })
+      return agent
+    }
+    if (!bumped && now < (m.staffNextAt ?? 0)) return agent
+    const member = staffMember(agent.staffType)
+    const act = member ? pickStaffActivity(agent, member, [...state.agents, ...staffMoves], env.openRooms, env.random) : null
+    if (!act) {
+      setMeta(agent.id, { staffNextAt: now + 5_000 })
+      return agent
+    }
+    let next: Agent = { ...agent, state: 'changing-room', visitSpotId: act.spotId, statusText: act.status, effectKind: undefined, deskPosition: { ...act.target } }
+    if (act.room === roomOf(agent)) {
+      next = { ...next, targetPosition: { ...act.target }, pathQueue: env.computePath(agent.position, act.target, act.room) }
+      setMeta(agent.id, { staffDoing: act.kind })
+    } else {
+      const moving = beginTransfer(next, act.room, act.target, 'visit', env)
+      next = { ...moving.agent, state: 'changing-room' }
+      setMeta(agent.id, { staffDoing: act.kind, transfer: moving.transfer })
+    }
+    staffMoves.push(next)
+    changed = true
+    return next
+  }
+
   const next = state.agents.map(agent => {
     const m = meta[agent.id] ?? newMeta(now)
     if (!meta[agent.id]) meta = { ...meta, [agent.id]: m }
@@ -1708,11 +1879,15 @@ export function stepOffice(state: OfficeState, dt: number, env: OfficeEnv): Step
         changed = true
         return stepped.agent
       }
+      if (isIdleStaff(agent)) return settleStaff(stepped.agent, m, { transfer: undefined })
       const settled = settleTransfer(stepped.agent, m.transfer.why, pendingStatus[agent.id], now)
       if (settled.usedPending) pendingStatus = without(pendingStatus, agent.id)
       setMeta(agent.id, { ...settled.meta, transfer: undefined })
       return settled.agent
     }
+
+    // Resident staff with nothing to do live their own office life
+    if (isIdleStaff(agent)) return stepIdleStaff(agent, m)
 
     // Walk toward the first waypoint in the queue, or straight to the
     // final targetPosition once the queue is empty
@@ -1912,7 +2087,7 @@ export function moveAgentsForEvent(agents: Agent[], target: Position, statusText
   const movedIds: string[] = []
   const next = agents.map(a => {
     // Why inOffice: the event happens in the office; someone in another room does not hear it
-    const seated = (a.state === 'working' || a.state === 'idle') && inOffice(a)
+    const seated = (a.state === 'working' || a.state === 'idle') && inOffice(a) && !isIdleStaff(a)
     const decorative = a.id === BOSS_ID || a.id === CLAUDE_ID || (isMainAgent(a) && isFreeMain(a))
     if (!seated || (env.live && !decorative)) return a
     movedIds.push(a.id)
@@ -2070,6 +2245,6 @@ export function checkErrand(boss: Agent | undefined, walkTo: Position, elapsedMs
 /** The one agent a single-agent event (printer jam) sends somewhere: never the boss, never a live worker or a Claude mid-turn */
 export function pickSingleEventAgent(agents: Agent[], env: OfficeEnv): Agent | null {
   const candidates = agents.filter(a =>
-    a.id !== BOSS_ID && (a.state === 'working' || a.state === 'idle') && inOffice(a) && (!env.live || a.id === CLAUDE_ID || (isMainAgent(a) && isFreeMain(a))))
+    a.id !== BOSS_ID && !isIdleStaff(a) && (a.state === 'working' || a.state === 'idle') && inOffice(a) && (!env.live || a.id === CLAUDE_ID || (isMainAgent(a) && isFreeMain(a))))
   return candidates.length > 0 ? pickOne(candidates, env.random) : null
 }

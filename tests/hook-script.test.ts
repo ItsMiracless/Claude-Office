@@ -131,27 +131,32 @@ describe('agent-tracker.sh: Agent tool', () => {
     expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04A',
       tool_input: { description: 'Translate the bug report', prompt: '...', subagent_type: 'penerjemah-pajak' },
-    })?.agent).toMatchObject({ name: 'Penerjemah Pajak', role: 'prompt-engineer', agentType: 'penerjemah-pajak' })
+    })?.agent).toMatchObject({ name: 'Christia', role: 'prompt-engineer', agentType: 'penerjemah-pajak' })
 
     expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04C',
       tool_input: { description: 'Reply to guest about wifi', prompt: '...', subagent_type: 'penerjemah-airbnb' },
-    })?.agent).toMatchObject({ name: 'Host AirBNB', role: 'fullstack-developer', agentType: 'penerjemah-airbnb' })
+    })?.agent).toMatchObject({ name: 'Celine', role: 'fullstack-developer', agentType: 'penerjemah-airbnb' })
 
     expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04D',
       tool_input: { description: 'Polish the landing page', prompt: '...', subagent_type: 'ui-ux-designer' },
-    })?.agent).toMatchObject({ name: 'UI/UX Designer', role: 'frontend-developer', agentType: 'ui-ux-designer' })
+    })?.agent).toMatchObject({ name: 'Adel', role: 'frontend-developer', agentType: 'ui-ux-designer' })
 
     expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04E',
       tool_input: { description: 'Audit dead code in the API', prompt: '...', subagent_type: 'backend-senior-engineer' },
-    })?.agent).toMatchObject({ name: 'Backend Engineer', role: 'code-reviewer', agentType: 'backend-senior-engineer' })
+    })?.agent).toMatchObject({ name: 'Linglong', role: 'code-reviewer', agentType: 'backend-senior-engineer' })
 
     expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04B',
       tool_input: { description: 'Deploy irvinhub.com', prompt: '...', subagent_type: 'website-maintainer' },
-    })?.agent).toMatchObject({ name: 'Web Ops', role: 'devops-engineer', agentType: 'website-maintainer' })
+    })?.agent).toMatchObject({ name: 'Dion', role: 'devops-engineer', agentType: 'website-maintainer' })
+
+    expect(runHook({
+      hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04F',
+      tool_input: { description: 'Split the audit across the team', prompt: '...', subagent_type: 'elaine' },
+    })?.agent).toMatchObject({ name: 'Elaine', role: 'ai-engineer', agentType: 'elaine' })
   })
 
   it('PostToolUse Agent (background launch) -> agent_linked with the subagent id', () => {

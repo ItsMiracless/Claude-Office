@@ -61,6 +61,7 @@ export interface Agent {
   model?: string            // the session's model (session_model / session_started)
   scene?: AgentScene        // a signal's scene on the character that ran the command
   callout?: Callout         // the boss shouting a prompt across the office, and the Claude that heard it
+  staffType?: string        // resident staff (src/residentStaff.ts): the subagent_type it stands for, idle or at work
 }
 
 /**
@@ -270,6 +271,8 @@ export interface SnapshotAgent {
   unread?: number
   sessionId?: string
   project?: string
+  /** The subagent_type Claude Code reported (matches a resident staff member, src/residentStaff.ts) */
+  agentType?: string
   /** An MCP call in flight (server/index.js tracks one record per call): the server called... */
   server?: string
   /** ...and the tool called on it */
@@ -310,7 +313,7 @@ export interface OfficeEvent {
     | 'health' | 'connection'
     // A session's task list changed (server/tasks.js), or the snapshot's boards (src/taskBoard.ts)
     | 'task_board'
-  agent?: Partial<Agent>
+  agent?: Partial<Agent> & { agentType?: string }
   agentId?: string
   status?: string
   result?: string
