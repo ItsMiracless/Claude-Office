@@ -144,6 +144,11 @@ describe('agent-tracker.sh: Agent tool', () => {
     })?.agent).toMatchObject({ name: 'UI/UX Designer', role: 'frontend-developer', agentType: 'ui-ux-designer' })
 
     expect(runHook({
+      hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04E',
+      tool_input: { description: 'Audit dead code in the API', prompt: '...', subagent_type: 'backend-senior-engineer' },
+    })?.agent).toMatchObject({ name: 'Backend Engineer', role: 'code-reviewer', agentType: 'backend-senior-engineer' })
+
+    expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04B',
       tool_input: { description: 'Deploy irvinhub.com', prompt: '...', subagent_type: 'website-maintainer' },
     })?.agent).toMatchObject({ name: 'Web Ops', role: 'devops-engineer', agentType: 'website-maintainer' })

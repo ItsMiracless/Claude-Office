@@ -612,6 +612,7 @@ CUSTOM_AGENTS = {
     'penerjemah-airbnb':       ('fullstack-developer',  'Host AirBNB'),
     'website-maintainer':      ('devops-engineer',      'Web Ops'),
     'ui-ux-designer':          ('frontend-developer',   'UI/UX Designer'),
+    'backend-senior-engineer': ('code-reviewer',        'Backend Engineer'),
 }
 
 def name_for(subagent_type, role):
