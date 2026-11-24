@@ -609,8 +609,9 @@ CUSTOM_AGENTS = {
     'pajak-sp2dk-pemeriksaan': ('security-auditor',     'SP2DK'),
     'airbnb-analis':           ('performance-engineer', 'AirBNB'),
     'penerjemah-pajak':        ('prompt-engineer',      'Penerjemah Pajak'),
-    'penerjemah-airbnb':       ('frontend-developer',   'Host AirBNB'),
+    'penerjemah-airbnb':       ('fullstack-developer',  'Host AirBNB'),
     'website-maintainer':      ('devops-engineer',      'Web Ops'),
+    'ui-ux-designer':          ('frontend-developer',   'UI/UX Designer'),
 }
 
 def name_for(subagent_type, role):

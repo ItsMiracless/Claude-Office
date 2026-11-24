@@ -136,7 +136,12 @@ describe('agent-tracker.sh: Agent tool', () => {
     expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04C',
       tool_input: { description: 'Reply to guest about wifi', prompt: '...', subagent_type: 'penerjemah-airbnb' },
-    })?.agent).toMatchObject({ name: 'Host AirBNB', role: 'frontend-developer', agentType: 'penerjemah-airbnb' })
+    })?.agent).toMatchObject({ name: 'Host AirBNB', role: 'fullstack-developer', agentType: 'penerjemah-airbnb' })
+
+    expect(runHook({
+      hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04D',
+      tool_input: { description: 'Polish the landing page', prompt: '...', subagent_type: 'ui-ux-designer' },
+    })?.agent).toMatchObject({ name: 'UI/UX Designer', role: 'frontend-developer', agentType: 'ui-ux-designer' })
 
     expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04B',
