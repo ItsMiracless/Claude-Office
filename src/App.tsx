@@ -837,6 +837,9 @@ const App: React.FC = () => {
   shareInteractionRef.current = shareInteraction
   const readOnly = !isSimMode && trusted === false
   const activeSessionCount = sessions.filter(s => s.state === 'active').length
+  // Read by the random-event timer (a mount effect): an empty live office has no prod to take down
+  const activeSessionsRef = useRef(activeSessionCount)
+  activeSessionsRef.current = activeSessionCount
   // The chat's @-autocomplete: sessions a prompt can be queued for, offered
   // only where the server would accept one (the trusted loopback page)
   const canQueue = trusted === true && !isSimMode && !isViewerMode && !isPhoneFull && canQueuePrompts()
@@ -1374,8 +1377,10 @@ const App: React.FC = () => {
       addMsg('system', 'default', '#8b8d91', event.slackAnnouncement, true)
 
       // Incident mode: deploy-fail / who-broke-build start a 90 s mini-incident,
-      // deploy-success ends one (the transition subscriber posts the chat lines)
-      dispatchIncident({ type: 'random-event', id: event.id, at: Date.now() })
+      // deploy-success ends one (the transition subscriber posts the chat lines).
+      // Why not in a live office with no active session: "PROD IS DOWN" over
+      // an empty office reads as a real outage when nothing is even connected
+      if (isSimMode || activeSessionsRef.current > 0) dispatchIncident({ type: 'random-event', id: event.id, at: Date.now() })
 
       // Why no sound: random events are office colour, not news (src/sounds.ts)
 

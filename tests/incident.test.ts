@@ -25,6 +25,7 @@ import {
   type IncidentInput,
   type IncidentState,
   type IncidentTransition,
+  restoredIncident,
 } from '../src/incident'
 import type { SignalKind } from '../src/types'
 import { INCIDENT_EVENTS, RANDOM_EVENTS } from '../src/events'
@@ -459,5 +460,26 @@ describe('the alarm burst as prod goes down', () => {
     expect(peaks / seconds).toBeLessThan(3)
     const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
     expect(reduced).toMatch(/\.room-alarm \{ display: none; \}|\.room-alarm[\s,]*\{\s*display: none/)
+  })
+})
+
+describe('restoredIncident (a reload)', () => {
+  const NOW = 5_000_000
+  it('keeps a real incident that is still running, with its own deadline', () => {
+    const r = restoredIncident('incident', String(NOW + 120_000), NOW)
+    expect(r?.variant).toBe('incident')
+    expect(r?.reason).toBe('restored')
+    expect(r?.expiresAt).toBe(NOW + 120_000)
+  })
+
+  it('does not bring back a stale incident: no deadline (older versions), or one in the past', () => {
+    expect(restoredIncident('incident', null, NOW)).toBeNull()
+    expect(restoredIncident('incident', String(NOW - 1), NOW)).toBeNull()
+    expect(restoredIncident('incident', 'junk', NOW)).toBeNull()
+    expect(restoredIncident('none', String(NOW + 1000), NOW)).toBeNull()
+  })
+
+  it('never stretches past the usual 10 minutes', () => {
+    expect(restoredIncident('incident', String(NOW + 86_400_000), NOW)?.expiresAt).toBe(NOW + INCIDENT_CONFIG.autoExitMs)
   })
 })

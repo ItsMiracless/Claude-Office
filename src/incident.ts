@@ -159,6 +159,8 @@ export function shouldPlayAlarm(state: IncidentState, now: number): boolean {
 
 export const VARIANT_STORAGE_KEY = 'agent-office-variant'
 export const LAST_INCIDENT_STORAGE_KEY = 'agent-office-last-incident'
+/** When the stored incident would have ended by itself (ms); without it a stored incident is not restored */
+export const VARIANT_UNTIL_STORAGE_KEY = 'agent-office-variant-until'
 const FIRST_SEEN_STORAGE_KEY = 'agent-office-first-seen'
 
 // ---------------------------------------------------------------------------
@@ -517,20 +519,44 @@ let lastEndedAtMem: number | null = null
 
 let state: IncidentState = loadInitial()
 
+/**
+ * The incident a reload picks up again, or null. Only a real incident (not a
+ * random event's 90 s mini-incident) is stored, with the time it would have
+ * timed out by itself; a reload keeps that deadline instead of starting a
+ * fresh 10 minutes. A stored incident without a deadline (left by an older
+ * version, or a tab closed mid-incident long ago) is not restored: otherwise
+ * "PROD IS DOWN" would greet every later visit to a quiet office.
+ * @param stored localStorage[VARIANT_STORAGE_KEY]
+ * @param until localStorage[VARIANT_UNTIL_STORAGE_KEY]
+ * @param now the clock
+ */
+export function restoredIncident(stored: string | null, until: string | null, now: number): IncidentState | null {
+  const expiresAt = Number(until)
+  if (stored !== 'incident' || !until || !Number.isFinite(expiresAt) || expiresAt <= now) return null
+  const t = reduceIncident(createIncidentState(), { type: 'command', cmd: 'incident', at: now, reason: 'restored' })
+  return { ...t.state, expiresAt: Math.min(expiresAt, now + INCIDENT_CONFIG.autoExitMs) }
+}
+
 function loadInitial(): IncidentState {
-  const base = createIncidentState()
   try {
-    if (localStorage.getItem(VARIANT_STORAGE_KEY) === 'incident') {
-      return reduceIncident(base, { type: 'command', cmd: 'incident', at: Date.now(), reason: 'restored' }).state
-    }
+    const restored = restoredIncident(localStorage.getItem(VARIANT_STORAGE_KEY), localStorage.getItem(VARIANT_UNTIL_STORAGE_KEY), Date.now())
+    if (restored) return restored
+    localStorage.setItem(VARIANT_STORAGE_KEY, 'none')
+    localStorage.removeItem(VARIANT_UNTIL_STORAGE_KEY)
   } catch {}
-  return base
+  return createIncidentState()
 }
 
 function persist() {
   // A URL-pinned incident is for screenshots — it must not leak into the next plain visit
   if (state.pinned) return
-  try { localStorage.setItem(VARIANT_STORAGE_KEY, state.variant) } catch {}
+  // A mini-incident is office colour: a reload ends it rather than turning it into a real one
+  const real = state.variant === 'incident' && !state.mini && state.expiresAt !== null
+  try {
+    localStorage.setItem(VARIANT_STORAGE_KEY, real ? 'incident' : 'none')
+    if (real) localStorage.setItem(VARIANT_UNTIL_STORAGE_KEY, String(state.expiresAt))
+    else localStorage.removeItem(VARIANT_UNTIL_STORAGE_KEY)
+  } catch {}
 }
 
 function emit() { listeners.forEach(l => l()) }
