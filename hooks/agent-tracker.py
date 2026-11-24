@@ -608,7 +608,8 @@ CUSTOM_AGENTS = {
     'pajak-riset-regulasi':    ('architect-reviewer',   'Riset Pajak'),
     'pajak-sp2dk-pemeriksaan': ('security-auditor',     'SP2DK'),
     'airbnb-analis':           ('performance-engineer', 'AirBNB'),
-    'penerjemah':              ('prompt-engineer',      'Penerjemah'),
+    'penerjemah-pajak':        ('prompt-engineer',      'Penerjemah Pajak'),
+    'penerjemah-airbnb':       ('frontend-developer',   'Host AirBNB'),
     'website-maintainer':      ('devops-engineer',      'Web Ops'),
 }
 

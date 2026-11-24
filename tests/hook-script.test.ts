@@ -130,8 +130,13 @@ describe('agent-tracker.sh: Agent tool', () => {
   it('PreToolUse Agent for an owner subagent keeps its own name, whatever the task says', () => {
     expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04A',
-      tool_input: { description: 'Translate the bug report', prompt: '...', subagent_type: 'penerjemah' },
-    })?.agent).toMatchObject({ name: 'Penerjemah', role: 'prompt-engineer', agentType: 'penerjemah' })
+      tool_input: { description: 'Translate the bug report', prompt: '...', subagent_type: 'penerjemah-pajak' },
+    })?.agent).toMatchObject({ name: 'Penerjemah Pajak', role: 'prompt-engineer', agentType: 'penerjemah-pajak' })
+
+    expect(runHook({
+      hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04C',
+      tool_input: { description: 'Reply to guest about wifi', prompt: '...', subagent_type: 'penerjemah-airbnb' },
+    })?.agent).toMatchObject({ name: 'Host AirBNB', role: 'frontend-developer', agentType: 'penerjemah-airbnb' })
 
     expect(runHook({
       hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04B',
