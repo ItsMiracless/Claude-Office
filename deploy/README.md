@@ -31,7 +31,7 @@ Di pengelola DNS irvinhub.com, tambahkan record:
 Login SSH ke VPS sebagai user yang biasa menjalankan Claude Code, lalu:
 
 ```bash
-git clone <URL repo ini> claude-office && cd claude-office
+git clone https://github.com/ItsMiracless/Claude-Office.git claude-office && cd claude-office
 ```
 ```bash
 sudo bash deploy/install-vps.sh office.irvinhub.com
@@ -73,7 +73,7 @@ Sesi cloud berjalan di container Anthropic, jadi butuh dua hal di environment cl
    Proxy cloud menyisipkannya otomatis, jadi token tidak ditulis di mana pun.
 2. **Setup script** yang memasang hook dan menulis alamat kantor:
    ```bash
-   git clone --depth 1 <URL repo ini> /opt/claude-office
+   git clone --depth 1 https://github.com/ItsMiracless/Claude-Office.git /opt/claude-office
    mkdir -p ~/.agent-office && echo https://office.irvinhub.com > ~/.agent-office/server-url
    bash /opt/claude-office/hooks/install-hooks.sh </dev/null
    ```
