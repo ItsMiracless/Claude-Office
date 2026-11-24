@@ -22,6 +22,21 @@ LOCK="${OFFICE_AUTOUPDATE_LOCK:-/run/claude-office-update.lock}"
 exec 9>"$LOCK"
 flock -n 9 || { echo "Another update is running"; exit 0; }
 
+# Why: this runs as root from a systemd timer, while the checkout belongs to
+# the user who cloned it. Git (2.35.2+) refuses such a repository ("detected
+# dubious ownership") unless it is a safe.directory; under `sudo` it lets it
+# pass by SUDO_UID, which a timer does not have. So enable-auto-update.sh
+# (run with sudo) deployed fine, and every timer run after it failed before
+# fetching, leaving the office on that first commit. The exception holds for
+# this checkout only and reaches install-vps.sh (its VERSION stamp) through
+# the environment; nothing is written to any git config.
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$SRC"
+OWNER="$(stat -c '%u:%g' "$SRC")"
+# Root writes FETCH_HEAD, new objects and, on an update, the files: hand them
+# back to the checkout's owner on the way out, so that user's own `git pull`
+# keeps working
+[ "$(id -u)" -eq 0 ] && trap 'chown -R "$OWNER" "$SRC"' EXIT
+
 cd "$SRC"
 git fetch -q origin "$BRANCH"
 LOCAL="$(git rev-parse HEAD)"

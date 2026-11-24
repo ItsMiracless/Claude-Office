@@ -74,6 +74,11 @@ ditambahkan. Setelah itu tekan Enter. Skrip memasang timer
 - Log: `journalctl -u claude-office-update -n 50`
 - Versi yang sedang live: header `X-Claude-Office-Version` di `/login`
 - Matikan: `sudo systemctl disable --now claude-office-update.timer`
+- Versi live tertinggal dari `main`? Lihat log di atas. Sebelum perbaikan
+  `safe.directory` di `deploy/auto-update.sh`, setiap putaran timer (berjalan
+  sebagai root) gagal dengan `detected dubious ownership` karena checkout milik
+  user lain. Sekali `git pull` + `sudo bash deploy/install-vps.sh office.irvinhub.com`
+  memasang versi yang sudah diperbaiki; setelah itu timer berjalan lagi.
 
 ![Halaman login](../docs/images/login-pixel.png)
 
