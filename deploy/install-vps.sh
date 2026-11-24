@@ -8,8 +8,8 @@
 #   1. installs Node 22, git, python3 and build tools when missing
 #   2. copies the app to /opt/claude-office and builds the office page
 #   3. runs the office as a systemd service (claude-office) on 127.0.0.1:3334
-#   4. puts it behind HTTPS on <domain> with a login (nginx + certbot when nginx
-#      is already serving your sites, else Caddy)
+#   4. puts it behind HTTPS on <domain> with a login page (nginx + certbot when
+#      nginx is already serving your sites, else Caddy)
 #   5. connects Claude Code on this VPS to it (hooks), and prints the link to
 #      open once in your browser and the token for your laptop / cloud sessions
 #
@@ -106,37 +106,65 @@ TOKEN="$(cat "$TOKEN_FILE")"
 curl -fsS --max-time 5 "http://127.0.0.1:$PORT/health" >/dev/null || die "Server tidak menjawab. Lihat: journalctl -u claude-office -n 50"
 echo "OK: kantor jalan di 127.0.0.1:$PORT"
 
-# --- 4. login + HTTPS ------------------------------------------------------------
-# The login covers the page itself (/, /assets, /sprites, /rooms). The data
-# routes and the WebSocket are not behind it: the office demands its own token
-# on every one of them when reached through a proxy (docs/reference.md), and
-# the hooks sign their posts with that token.
-LOGIN_USER="${OFFICE_LOGIN_USER:-}"
-LOGIN_PASS="${OFFICE_LOGIN_PASS:-}"
-need_login() {
-  if [ -z "$LOGIN_USER" ]; then read -r -p "Username login kantor [irvin]: " LOGIN_USER; LOGIN_USER="${LOGIN_USER:-irvin}"; fi
+# --- 4. login page + HTTPS ---------------------------------------------------------
+# A login page (deploy/login-gateway.mjs, 127.0.0.1:$LOGIN_PORT) guards the
+# office page (/, /assets, /sprites, /rooms) with a session cookie; after
+# signing in the browser lands on the office with its token. The data routes
+# and the WebSocket are not behind it: the office demands its own token on
+# every one of them when reached through a proxy (docs/reference.md), and the
+# hooks send that token.
+LOGIN_PORT="${OFFICE_LOGIN_PORT:-3340}"
+LOGIN_DIR=/etc/claude-office
+LOGIN_FILE="$LOGIN_DIR/login.json"
+mkdir -p "$LOGIN_DIR"
+chown root:"$(id -gn "$RUN_AS")" "$LOGIN_DIR"; chmod 750 "$LOGIN_DIR"
+if [ ! -s "$LOGIN_FILE" ] || [ -n "${OFFICE_LOGIN_PASS:-}" ]; then
+  LOGIN_USER="${OFFICE_LOGIN_USER:-}"
+  LOGIN_PASS="${OFFICE_LOGIN_PASS:-}"
+  if [ -z "$LOGIN_USER" ]; then read -r -p "User ID login kantor [irvin]: " LOGIN_USER; LOGIN_USER="${LOGIN_USER:-irvin}"; fi
   if [ -z "$LOGIN_PASS" ]; then
     read -r -s -p "Password login kantor (min. 10 karakter): " LOGIN_PASS; echo
-    [ "${#LOGIN_PASS}" -ge 10 ] || die "Password terlalu pendek"
   fi
-}
+  [ "${#LOGIN_PASS}" -ge 10 ] || die "Password terlalu pendek (min. 10 karakter)"
+  OFFICE_LOGIN_USER="$LOGIN_USER" OFFICE_LOGIN_PASS="$LOGIN_PASS" OFFICE_LOGIN_FILE="$LOGIN_FILE" \
+    "$NODE_BIN" "$APP_DIR/deploy/login-gateway.mjs" --set-password
+  unset LOGIN_PASS
+fi
+chown root:"$(id -gn "$RUN_AS")" "$LOGIN_FILE"; chmod 640 "$LOGIN_FILE"
 
-UI_PATHS_NGINX='location = / { auth_basic "Claude Office"; auth_basic_user_file /etc/nginx/claude-office.htpasswd; include /etc/nginx/snippets/claude-office-proxy.conf; }
-    location = /index.html { auth_basic "Claude Office"; auth_basic_user_file /etc/nginx/claude-office.htpasswd; include /etc/nginx/snippets/claude-office-proxy.conf; }
-    location ^~ /assets/  { auth_basic "Claude Office"; auth_basic_user_file /etc/nginx/claude-office.htpasswd; include /etc/nginx/snippets/claude-office-proxy.conf; }
-    location ^~ /sprites/ { auth_basic "Claude Office"; auth_basic_user_file /etc/nginx/claude-office.htpasswd; include /etc/nginx/snippets/claude-office-proxy.conf; }
-    location ^~ /rooms/   { auth_basic "Claude Office"; auth_basic_user_file /etc/nginx/claude-office.htpasswd; include /etc/nginx/snippets/claude-office-proxy.conf; }'
+say "Pasang service login: claude-office-login"
+cat > /etc/systemd/system/claude-office-login.service <<EOF2
+[Unit]
+Description=Claude Office login page
+After=network-online.target
+
+[Service]
+User=$RUN_AS
+WorkingDirectory=$APP_DIR
+Environment=OFFICE_LOGIN_PORT=$LOGIN_PORT
+Environment=OFFICE_LOGIN_FILE=$LOGIN_FILE
+Environment=OFFICE_TOKEN_FILE=$TOKEN_FILE
+ExecStart=$NODE_BIN deploy/login-gateway.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+EOF2
+systemctl daemon-reload
+systemctl enable claude-office-login >/dev/null 2>&1
+systemctl restart claude-office-login
+for _ in $(seq 1 10); do curl -fsS -o /dev/null "http://127.0.0.1:$LOGIN_PORT/login" && break; sleep 1; done
+curl -fsS -o /dev/null "http://127.0.0.1:$LOGIN_PORT/login" || die "Halaman login tidak jalan. Lihat: journalctl -u claude-office-login -n 50"
+echo "OK: halaman login jalan di 127.0.0.1:$LOGIN_PORT"
 
 if command -v nginx >/dev/null 2>&1; then
-  say "nginx terdeteksi: pasang situs $DOMAIN + HTTPS (certbot)"
-  apt-get install -y -q apache2-utils certbot python3-certbot-nginx >/dev/null
-  if [ ! -s /etc/nginx/claude-office.htpasswd ] || [ -n "${OFFICE_LOGIN_PASS:-}" ]; then
-    need_login
-    printf '%s' "$LOGIN_PASS" | htpasswd -i -c -B /etc/nginx/claude-office.htpasswd "$LOGIN_USER" 2>/dev/null
-  fi
-  chmod 640 /etc/nginx/claude-office.htpasswd; chgrp www-data /etc/nginx/claude-office.htpasswd 2>/dev/null || true
+  say "nginx terdeteksi: pasang situs $DOMAIN + HTTPS"
+  apt-get install -y -q certbot python3-certbot-nginx >/dev/null
+  rm -f /etc/nginx/claude-office.htpasswd   # the old browser-popup login
   mkdir -p /etc/nginx/snippets
-  cat > /etc/nginx/snippets/claude-office-proxy.conf <<EOF
+  cat > /etc/nginx/snippets/claude-office-proxy.conf <<EOF2
 proxy_pass http://127.0.0.1:$PORT;
 proxy_http_version 1.1;
 proxy_set_header Host \$host;
@@ -148,31 +176,86 @@ proxy_set_header Connection \$claude_office_connection;
 proxy_read_timeout 3600s;
 proxy_send_timeout 3600s;
 proxy_buffering off;
-EOF
+EOF2
+  cat > /etc/nginx/snippets/claude-office-locations.conf <<EOF2
+client_max_body_size 5m;
+
+# login page (cookie session)
+location = /login  { proxy_pass http://127.0.0.1:$LOGIN_PORT; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-Proto \$scheme; proxy_set_header X-Forwarded-Host \$host; }
+location = /logout { proxy_pass http://127.0.0.1:$LOGIN_PORT; proxy_set_header Host \$host; proxy_set_header X-Forwarded-Proto \$scheme; }
+location = /_claude_office_auth {
+    internal;
+    proxy_pass http://127.0.0.1:$LOGIN_PORT/auth/check;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header Cookie \$http_cookie;
+}
+location @claude_office_login { return 302 /login?next=\$request_uri; }
+
+# the office page: needs the login cookie
+location = /           { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+location = /index.html { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+location ^~ /assets/   { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+location ^~ /sprites/  { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+location ^~ /rooms/    { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+
+# data routes + WebSocket: protected by the office token
+location / { include /etc/nginx/snippets/claude-office-proxy.conf; }
+EOF2
   SITE=/etc/nginx/sites-available/claude-office
   [ -d /etc/nginx/sites-available ] || SITE=/etc/nginx/conf.d/claude-office.conf
-  cat > "$SITE" <<EOF
-map \$http_upgrade \$claude_office_connection { default upgrade; '' close; }
+  CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
+  write_site() {
+    {
+      echo 'map $http_upgrade $claude_office_connection { default upgrade; '"''"' close; }'
+      if [ -s "$CERT_DIR/fullchain.pem" ]; then
+        cat <<EOF2
 
 server {
     listen 80;
     listen [::]:80;
     server_name $DOMAIN;
-    client_max_body_size 5m;
-
-    $UI_PATHS_NGINX
-
-    # data routes + WebSocket: protected by the office token, not the login
-    location / { include /etc/nginx/snippets/claude-office-proxy.conf; }
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://\$host\$request_uri; }
 }
-EOF
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $DOMAIN;
+    ssl_certificate $CERT_DIR/fullchain.pem;
+    ssl_certificate_key $CERT_DIR/privkey.pem;
+$( [ -f /etc/letsencrypt/options-ssl-nginx.conf ] && echo "    include /etc/letsencrypt/options-ssl-nginx.conf;" )
+$( [ -f /etc/letsencrypt/ssl-dhparams.pem ] && echo "    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;" )
+    include /etc/nginx/snippets/claude-office-locations.conf;
+}
+EOF2
+      else
+        cat <<EOF2
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN;
+    include /etc/nginx/snippets/claude-office-locations.conf;
+}
+EOF2
+      fi
+    } > "$SITE"
+  }
+  write_site
   [ -d /etc/nginx/sites-enabled ] && [ "$SITE" = /etc/nginx/sites-available/claude-office ] && ln -sf "$SITE" /etc/nginx/sites-enabled/claude-office
   nginx -t && systemctl reload nginx
-  if [ -n "$DNS_IP" ]; then
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect \
-      || warn "certbot gagal. Setelah DNS benar, jalankan: sudo certbot --nginx -d $DOMAIN"
-  else
-    warn "Lewati HTTPS (DNS belum ada). Setelah DNS aktif: sudo certbot --nginx -d $DOMAIN"
+  if [ ! -s "$CERT_DIR/fullchain.pem" ]; then
+    if [ -n "$DNS_IP" ]; then
+      if certbot certonly --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email; then
+        write_site && nginx -t && systemctl reload nginx
+      else
+        warn "certbot gagal. Setelah DNS benar, jalankan ulang skrip ini."
+      fi
+    else
+      warn "Lewati HTTPS (DNS belum ada). Setelah DNS aktif, jalankan ulang skrip ini."
+    fi
   fi
 else
   if ! command -v caddy >/dev/null 2>&1; then
@@ -186,24 +269,24 @@ else
     apt-get update -q && apt-get install -y -q caddy >/dev/null
   fi
   say "Caddy: situs $DOMAIN + HTTPS"
-  CADDY_SITE=/etc/caddy/claude-office.caddy
-  if [ ! -s "$CADDY_SITE" ] || [ -n "${OFFICE_LOGIN_PASS:-}" ]; then
-    need_login
-    HASH="$(caddy hash-password --plaintext "$LOGIN_PASS")"
-    cat > "$CADDY_SITE" <<EOF
+  cat > /etc/caddy/claude-office.caddy <<EOF2
 $DOMAIN {
 	encode gzip
-	@ui path / /index.html /assets/* /sprites/* /rooms/*
-	basicauth @ui {
-		$LOGIN_USER $HASH
+	@login path /login /logout
+	handle @login {
+		reverse_proxy 127.0.0.1:$LOGIN_PORT
 	}
-	# data routes + WebSocket: protected by the office token, not the login
+	# the office page: needs the login cookie
+	@ui path / /index.html /assets/* /sprites/* /rooms/*
+	forward_auth @ui 127.0.0.1:$LOGIN_PORT {
+		uri /auth/check?mode=redirect
+	}
+	# data routes + WebSocket: protected by the office token
 	reverse_proxy 127.0.0.1:$PORT {
 		flush_interval -1
 	}
 }
-EOF
-  fi
+EOF2
   grep -q 'import /etc/caddy/claude-office.caddy' /etc/caddy/Caddyfile 2>/dev/null \
     || printf '\nimport /etc/caddy/claude-office.caddy\n' >> /etc/caddy/Caddyfile
   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
@@ -224,9 +307,9 @@ cat <<EOF
 
 $(printf '\033[1;32m')Selesai!$(printf '\033[0m')
 
-1) Buka SEKALI link ini di browser (laptop & HP), lalu login:
-     https://$DOMAIN/#token=$TOKEN
-   Setelah itu cukup buka https://$DOMAIN (token tersimpan di browser).
+1) Buka https://$DOMAIN di browser (laptop & HP) dan login dengan User ID +
+   password tadi. Anda langsung masuk ke kantor (sesi login berlaku 30 hari).
+   Keluar: https://$DOMAIN/logout
 
 2) Token kantor (RAHASIA — dipakai laptop dan sesi cloud):
      $TOKEN
@@ -235,7 +318,7 @@ $(printf '\033[1;32m')Selesai!$(printf '\033[0m')
      bash deploy/connect-laptop.sh https://$DOMAIN
 
 Perintah berguna:
-   systemctl status claude-office        # status
+   systemctl status claude-office claude-office-login   # status
    journalctl -u claude-office -f        # log
    sudo bash deploy/install-vps.sh $DOMAIN   # update setelah ada perubahan
 EOF

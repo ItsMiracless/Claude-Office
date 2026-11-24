@@ -11,7 +11,8 @@ Sesi cloud claude.ai/code ──token────┘        (login + token)
 
 ## Keamanan singkat
 
-- Halaman kantor dikunci dengan **login** (username + password).
+- Halaman kantor dikunci dengan **halaman login** (User ID + password, sesi 30 hari).
+  Keluar: `https://office.irvinhub.com/logout`.
 - Semua data (sesi, prompt, balasan) dan koneksi live juga butuh **token kantor**.
   Tanpa token, server menjawab `401`, walaupun lolos login.
 - Hook mengirim token lewat header dari file berizin `600`, jadi token tidak pernah
@@ -41,17 +42,16 @@ Skrip ini akan:
 - memasang Node 22,
 - membangun kantor ke `/opt/claude-office`,
 - menjalankannya sebagai service `claude-office`,
-- memasang HTTPS + login. Kalau nginx sudah dipakai untuk irvinhub.com, skrip memakai
+- memasang HTTPS + halaman login (service `claude-office-login`). Kalau nginx sudah dipakai untuk irvinhub.com, skrip memakai
   nginx + certbot. Kalau belum ada, skrip memasang Caddy.
 - memasang hook untuk Claude Code di VPS itu.
 
-Di akhir, skrip mencetak:
-1. **Link sekali buka**: `https://office.irvinhub.com/#token=...`. Buka sekali di
-   laptop dan sekali di HP. Setelah itu cukup buka `https://office.irvinhub.com`.
-2. **Token kantor**, untuk langkah 3 dan 4.
+Di akhir, skrip mencetak **token kantor** untuk langkah 3 dan 4. Untuk melihat
+kantor, buka `https://office.irvinhub.com` lalu login. Token kantor otomatis
+diberikan ke browser setelah login.
 
 Update di kemudian hari: `git pull`, lalu jalankan lagi perintah `install-vps.sh` yang
-sama. Token dan login tidak berubah.
+sama. Token dan password login tidak berubah.
 
 ## 3. Sambungkan laptop
 
@@ -84,16 +84,18 @@ formulir aman, tidak lewat chat.
 ## Perintah berguna di VPS
 
 ```bash
-systemctl status claude-office
+systemctl status claude-office claude-office-login
 ```
 ```bash
 journalctl -u claude-office -f
 ```
 ```bash
-sudo systemctl restart claude-office
+sudo systemctl restart claude-office claude-office-login
 ```
 
 ## Ganti password login
+
+Semua perangkat akan otomatis keluar dan perlu login ulang.
 
 ```bash
 sudo OFFICE_LOGIN_USER=irvin OFFICE_LOGIN_PASS='password-baru-panjang' bash deploy/install-vps.sh office.irvinhub.com
