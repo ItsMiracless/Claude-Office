@@ -14,6 +14,9 @@
 #      open once in your browser and the token for your laptop / cloud sessions
 #
 # Safe to re-run (updates the app, keeps the token and the login).
+# OFFICE_AUTO=1 (deploy/auto-update.sh): no questions, skip the system
+# packages when Node 22 is already there, reuse node_modules when the lockfile
+# has not changed.
 #
 # Who runs the office: the user who ran sudo (OFFICE_RUN_AS overrides). Use the
 # same user that runs Claude Code on this VPS, so both share ~/.agent-office.
@@ -25,6 +28,7 @@ APP_DIR="${OFFICE_APP_DIR:-/opt/claude-office}"
 PORT="${AGENT_OFFICE_PORT:-3334}"
 RUN_AS="${OFFICE_RUN_AS:-${SUDO_USER:-root}}"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AUTO="${OFFICE_AUTO:-0}"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!! %s\033[0m\n' "$*"; }
@@ -51,26 +55,42 @@ else
 fi
 
 # --- 1. packages ---------------------------------------------------------------
-say "Pasang paket dasar"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
-apt-get install -y -q curl ca-certificates git python3 build-essential rsync >/dev/null
 NODE_MAJOR="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || echo 0)"
-if [ "${NODE_MAJOR:-0}" -lt 22 ]; then
-  say "Pasang Node.js 22"
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
-  apt-get install -y -q nodejs >/dev/null
+if [ "$AUTO" = 1 ] && [ "${NODE_MAJOR:-0}" -ge 22 ] && command -v rsync >/dev/null && command -v git >/dev/null; then
+  echo "Auto-update: paket sistem sudah lengkap (Node $(node -v)), dilewati"
+else
+  say "Pasang paket dasar"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -q
+  apt-get install -y -q curl ca-certificates git python3 build-essential rsync >/dev/null
+  if [ "${NODE_MAJOR:-0}" -lt 22 ]; then
+    say "Pasang Node.js 22"
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+    apt-get install -y -q nodejs >/dev/null
+  fi
+  echo "Node $(node -v)"
 fi
-echo "Node $(node -v)"
 
 # --- 2. app --------------------------------------------------------------------
 say "Salin aplikasi ke $APP_DIR"
 mkdir -p "$APP_DIR"
-rsync -a --delete --exclude node_modules --exclude dist --exclude .git "$SRC_DIR"/ "$APP_DIR"/
+rsync -a --delete --exclude node_modules --exclude dist --exclude .git --exclude .lock-sum "$SRC_DIR"/ "$APP_DIR"/
 chown -R "$RUN_AS":"$(id -gn "$RUN_AS")" "$APP_DIR"
 
-say "Install dependency & build halaman kantor (beberapa menit)"
-sudo -u "$RUN_AS" -H bash -c "cd '$APP_DIR' && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --no-audit --no-fund --loglevel=error && npx vite build --logLevel error"
+# The deployed commit, for the login page's X-Claude-Office-Version header
+git -C "$SRC_DIR" rev-parse --short HEAD > "$APP_DIR/VERSION" 2>/dev/null || echo unknown > "$APP_DIR/VERSION"
+chown "$RUN_AS" "$APP_DIR/VERSION"
+echo "Versi: $(cat "$APP_DIR/VERSION")"
+
+LOCK_SUM="$(sha256sum "$APP_DIR/package-lock.json" | cut -d' ' -f1)"
+if [ "$AUTO" = 1 ] && [ -d "$APP_DIR/node_modules" ] && [ "$(cat "$APP_DIR/.lock-sum" 2>/dev/null)" = "$LOCK_SUM" ]; then
+  say "Build halaman kantor (dependency tidak berubah)"
+  sudo -u "$RUN_AS" -H bash -c "cd '$APP_DIR' && npx vite build --logLevel error"
+else
+  say "Install dependency & build halaman kantor (beberapa menit)"
+  sudo -u "$RUN_AS" -H bash -c "cd '$APP_DIR' && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --no-audit --no-fund --loglevel=error && npx vite build --logLevel error"
+  echo "$LOCK_SUM" > "$APP_DIR/.lock-sum"
+fi
 
 # --- 3. service ----------------------------------------------------------------
 say "Pasang service systemd: claude-office"
@@ -119,6 +139,7 @@ LOGIN_FILE="$LOGIN_DIR/login.json"
 mkdir -p "$LOGIN_DIR"
 chown root:"$(id -gn "$RUN_AS")" "$LOGIN_DIR"; chmod 750 "$LOGIN_DIR"
 if [ ! -s "$LOGIN_FILE" ] || [ -n "${OFFICE_LOGIN_PASS:-}" ]; then
+  [ "$AUTO" = 1 ] && [ -z "${OFFICE_LOGIN_PASS:-}" ] && die "Login belum disiapkan. Jalankan sekali: sudo bash deploy/install-vps.sh $DOMAIN"
   LOGIN_USER="${OFFICE_LOGIN_USER:-}"
   LOGIN_PASS="${OFFICE_LOGIN_PASS:-}"
   if [ -z "$LOGIN_USER" ]; then read -r -p "User ID login kantor [irvin]: " LOGIN_USER; LOGIN_USER="${LOGIN_USER:-irvin}"; fi
@@ -302,6 +323,12 @@ say "Sambungkan Claude Code di VPS ini (hooks untuk user $RUN_AS)"
 sudo -u "$RUN_AS" -H bash -c "cd '$APP_DIR' && bash hooks/install-hooks.sh </dev/null" >/dev/null 2>&1 \
   && echo "OK: hooks terpasang di $RUN_HOME/.claude/settings.json" \
   || warn "Gagal memasang hooks; jalankan manual: cd $APP_DIR && bash hooks/install-hooks.sh"
+
+# In auto mode the output goes to the journal: no token there
+if [ "$AUTO" = 1 ]; then
+  echo "Auto-update selesai: versi $(cat "$APP_DIR/VERSION") aktif di https://$DOMAIN"
+  exit 0
+fi
 
 cat <<EOF
 

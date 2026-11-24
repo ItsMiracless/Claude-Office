@@ -27,6 +27,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+import { FONTS_HREF, UI, SESSION_CLAUDES, mascotSvg } from './pixel-tokens.mjs'
 
 const PORT = Number(process.env.OFFICE_LOGIN_PORT || 3340)
 const LOGIN_FILE = process.env.OFFICE_LOGIN_FILE || '/etc/claude-office/login.json'
@@ -34,6 +36,10 @@ const TOKEN_FILE = process.env.OFFICE_TOKEN_FILE || path.join(process.env.AGENT_
 const COOKIE = 'co_session'
 const SESSION_DAYS = Number(process.env.OFFICE_SESSION_DAYS || 30)
 const SCRYPT = { N: 16384, r: 8, p: 1 }
+// The deployed commit (install-vps.sh writes APP_DIR/VERSION), shown as a header on /login
+const VERSION = (() => {
+  try { return fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'VERSION'), 'utf8').trim().slice(0, 40) } catch { return 'dev' }
+})()
 
 // ---------------------------------------------------------------------------
 // password file
@@ -180,6 +186,7 @@ function send(res, status, body, headers = {}) {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Frame-Options': 'DENY',
+    'X-Claude-Office-Version': VERSION,
     'Referrer-Policy': 'same-origin',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; form-action 'self'; img-src data:",
     ...headers,
@@ -190,123 +197,150 @@ function send(res, status, body, headers = {}) {
 // ---------------------------------------------------------------------------
 // the page
 // ---------------------------------------------------------------------------
+// The page: a night over the office, the eight session Claudes hopping on a
+// ledge and the boss on the sign-in panel (deploy/pixel-tokens.mjs).
+const STARS = Array.from({ length: 46 }, (_, i) => {
+  // fixed pseudo-random layout so the sky is the same on every load
+  const r = (n) => ((Math.sin(i * 12.9898 + n * 78.233) * 43758.5453) % 1 + 1) % 1
+  return { x: (r(1) * 100).toFixed(2), y: (r(2) * 62).toFixed(2), s: r(3) > 0.82 ? 3 : 2, d: (r(4) * 4).toFixed(2) }
+})
+
 function page({ host = '', next = '/', error = '', user = '' } = {}) {
+  const crew = SESSION_CLAUDES.map((name, i) =>
+    `<li class="mate" style="--i:${i}">${mascotSvg(name, { size: 56, title: `Claude ${i + 1}` })}</li>`).join('')
+  const stars = STARS.map((s) =>
+    `<i style="left:${s.x}%;top:${s.y}%;width:${s.s}px;height:${s.s}px;animation-delay:${s.d}s"></i>`).join('')
   return `<!doctype html>
 <html lang="id">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Claude Office — IrvinHub</title>
+<meta name="color-scheme" content="dark">
+<title>Claude Office</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="${FONTS_HREF}" rel="stylesheet">
 <style>
   :root {
-    --bg: #f5f6f6; --dot: #d9dbe0; --card: #ffffff; --border: #e4e6ea; --text: #111216;
-    --muted: #6b6f7b; --accent: #5e6ad2; --accent-hover: #4f5bc4; --accent-soft: rgba(94,106,210,.12);
-    --input: #ffffff; --error-bg: #fdecec; --error: #b42318; --clay: #d97757;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #0e0f12; --dot: #23252c; --card: #16171b; --border: #2a2c33; --text: #eceef2;
-      --muted: #9a9eab; --accent: #7480e6; --accent-hover: #8790ee; --accent-soft: rgba(116,128,230,.16);
-      --input: #1c1d22; --error-bg: #3a1616; --error: #f3a59d;
-    }
-  }
-  :root[data-theme="dark"] {
-    --bg: #0e0f12; --dot: #23252c; --card: #16171b; --border: #2a2c33; --text: #eceef2;
-    --muted: #9a9eab; --accent: #7480e6; --accent-hover: #8790ee; --accent-soft: rgba(116,128,230,.16);
-    --input: #1c1d22; --error-bg: #3a1616; --error: #f3a59d;
+    --night: ${UI.night}; --night2: ${UI.night2}; --surface: ${UI.surface}; --surface2: ${UI.surface2};
+    --line: ${UI.line}; --text: ${UI.text}; --muted: ${UI.muted}; --gold: ${UI.gold}; --gold-dark: ${UI.goldDark};
+    --clay: ${UI.clay}; --success: ${UI.success}; --danger: ${UI.danger}; --outline: ${UI.outline};
+    --px: 4px;
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; }
+  html, body { min-height: 100%; }
   body {
-    margin: 0; font-family: Inter, "Segoe UI", system-ui, sans-serif; color: var(--text);
-    background: var(--bg) radial-gradient(var(--dot) 1px, transparent 1px) 0 0 / 22px 22px;
-    display: grid; place-items: center; padding: 24px 16px;
+    margin: 0; color: var(--text); font-family: ${UI.fontMono};
+    background: linear-gradient(180deg, var(--night) 0%, #171a2e 55%, var(--night2) 100%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 32px 16px 40px; overflow-x: hidden;
   }
-  .theme {
-    position: fixed; top: 16px; right: 16px; border: 1px solid var(--accent-soft); background: var(--accent-soft);
-    color: var(--accent); font: 600 12px Inter, sans-serif; padding: 7px 12px; border-radius: 999px; cursor: pointer;
+  .sky { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+  .sky i { position: absolute; background: #fff7d6; opacity: .25; animation: twinkle 3.2s steps(2) infinite; }
+  .moon { position: fixed; top: 7vh; right: 9vw; width: 40px; height: 40px; background: #fff3c4; z-index: 0;
+    box-shadow: 0 0 0 4px rgba(255,243,196,.12), 0 0 0 10px rgba(255,243,196,.05);
+    clip-path: polygon(20% 0,80% 0,80% 10%,90% 10%,90% 20%,100% 20%,100% 80%,90% 80%,90% 90%,80% 90%,80% 100%,20% 100%,20% 90%,10% 90%,10% 80%,0 80%,0 20%,10% 20%,10% 10%,20% 10%); }
+  @keyframes twinkle { 50% { opacity: .95; } }
+  main { position: relative; z-index: 1; width: 100%; max-width: 460px; }
+  h1 {
+    font-family: ${UI.fontPixel}; font-weight: 400; text-align: center; margin: 0 0 6px;
+    font-size: 22px; letter-spacing: 2px; color: var(--gold); line-height: 1.4;
+    text-shadow: 3px 3px 0 var(--outline), -1px -1px 0 var(--outline);
   }
-  .card {
-    width: 100%; max-width: 448px; background: var(--card); border: 1px solid var(--border);
-    border-radius: 16px; padding: 32px; box-shadow: 0 1px 2px rgba(16,18,22,.04), 0 8px 24px rgba(16,18,22,.04);
+  .tag { text-align: center; color: var(--muted); font-size: 12.5px; margin: 0 0 22px; }
+  .crew { list-style: none; margin: 0 auto; padding: 0 4px; display: flex; justify-content: center; gap: 4px; }
+  .mate { width: 52px; display: flex; justify-content: center; align-items: flex-end; height: 64px; }
+  .mate svg { width: 46px; height: auto; display: block; animation: hop 1.6s steps(1) infinite; animation-delay: calc(var(--i) * .2s); }
+  @keyframes hop { 0%, 60%, 100% { transform: translateY(0); } 70% { transform: translateY(-8px); } 80% { transform: translateY(-12px); } 90% { transform: translateY(-6px); } }
+  .ledge { height: 8px; margin: 0 6px 58px; background: repeating-linear-gradient(90deg, #6b4f3a 0 16px, #5a4a38 16px 32px); box-shadow: 0 4px 0 #3b2c20; }
+  .panel-wrap { position: relative; }
+  .panel {
+    position: relative; background: var(--surface); padding: 30px 26px 22px;
+    border: 4px solid var(--gold);
+    box-shadow: 0 0 0 4px var(--outline), 10px 10px 0 4px rgba(0,0,0,.45);
   }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .logo {
-    width: 32px; height: 32px; border-radius: 8px; background: var(--accent); color: #fff;
-    display: grid; place-items: center; font-weight: 700; font-size: 13px; letter-spacing: .02em;
-  }
-  .brand b { display: block; font-size: 15px; font-weight: 600; }
-  .brand span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 1px; }
-  h1 { font-size: 24px; font-weight: 700; margin: 34px 0 8px; letter-spacing: -.01em; }
-  .sub { color: var(--muted); font-size: 14.5px; margin: 0 0 26px; }
-  .office { display: flex; align-items: center; gap: 8px; }
-  .clawd { width: 22px; height: 18px; flex: none; image-rendering: pixelated; }
-  label { display: block; font-size: 14px; font-weight: 500; margin: 0 0 8px; }
-  .field { position: relative; margin-bottom: 18px; }
+  .panel::before { content: ''; position: absolute; inset: 4px; pointer-events: none; box-shadow: inset 0 0 0 2px rgba(255,209,102,.14); }
+  .boss { position: absolute; right: 22px; top: -4px; transform: translateY(-100%); z-index: 2; }
+  .boss svg { width: 44px; height: auto; display: block; }
+  .bubble { position: absolute; z-index: 2; right: 78px; top: -46px; background: #fff; color: #1a1d21; font: 400 8px/1.5 ${UI.fontPixel};
+    padding: 6px 8px; border: 2px solid var(--outline); white-space: nowrap; }
+  .bubble::after { content: ''; position: absolute; right: -8px; bottom: 6px; border: 4px solid transparent; border-left-color: var(--outline); }
+  label { display: block; font-family: ${UI.fontPixel}; font-size: 10px; color: var(--gold); margin: 0 0 9px; letter-spacing: 1px; }
+  .field { position: relative; margin-bottom: 20px; }
   input {
-    width: 100%; height: 40px; border: 1px solid var(--border); border-radius: 10px; background: var(--input);
-    color: var(--text); font: 400 15px Inter, sans-serif; padding: 0 12px; outline: none;
+    width: 100%; height: 44px; background: var(--night2); color: var(--text); border: 0; outline: none;
+    font: 500 15px ${UI.fontMono}; padding: 0 12px;
+    box-shadow: inset 0 0 0 2px var(--line), inset 3px 3px 0 2px rgba(0,0,0,.35);
   }
-  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-  .pw input { padding-right: 42px; }
-  .eye {
-    position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none;
-    color: var(--muted); width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: grid; place-items: center;
-  }
-  .eye:hover { color: var(--text); }
+  input:focus { box-shadow: inset 0 0 0 2px var(--gold), inset 3px 3px 0 2px rgba(0,0,0,.35); }
+  .pw input { padding-right: 46px; }
+  .eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: none; cursor: pointer;
+    width: 36px; height: 36px; display: grid; place-items: center; color: var(--muted); }
+  .eye:hover, .eye[aria-pressed="true"] { color: var(--gold); }
+  .eye svg { width: 20px; height: 14px; }
   button.submit {
-    width: 100%; height: 36px; border: 0; border-radius: 999px; background: var(--accent); color: #fff;
-    font: 600 14px Inter, sans-serif; cursor: pointer; margin-top: 2px;
+    width: 100%; height: 50px; margin-top: 6px; border: 0; cursor: pointer; color: #2a1d05;
+    font: 400 12px ${UI.fontPixel}; letter-spacing: 1px; background: var(--gold);
+    box-shadow: inset -4px -4px 0 var(--gold-dark), inset 4px 4px 0 #ffe7a3, 0 0 0 3px var(--outline), 0 6px 0 3px var(--outline);
+    transition: transform .05s steps(1);
   }
-  button.submit:hover { background: var(--accent-hover); }
-  button.submit:disabled { opacity: .7; cursor: wait; }
-  .error { background: var(--error-bg); color: var(--error); font-size: 13.5px; border-radius: 10px; padding: 10px 12px; margin: -8px 0 18px; }
-  .foot { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 22px; }
-  @media (max-width: 420px) { .card { padding: 24px 20px; } h1 { margin-top: 26px; } }
+  button.submit:hover { filter: brightness(1.06); }
+  button.submit:active { transform: translateY(4px); box-shadow: inset 4px 4px 0 var(--gold-dark), 0 0 0 3px var(--outline), 0 2px 0 3px var(--outline); }
+  button.submit:disabled { cursor: wait; filter: saturate(.6); }
+  .error { background: #3a1616; color: #ffc9c5; font-size: 13px; padding: 10px 12px; margin: 0 0 18px;
+    box-shadow: inset 0 0 0 2px var(--danger); display: flex; gap: 10px; align-items: center; }
+  .error b { font-family: ${UI.fontPixel}; font-size: 10px; color: var(--danger); font-weight: 400; }
+  .foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 18px; color: var(--muted); font-size: 11.5px; }
+  .foot .dot { display: inline-block; width: 8px; height: 8px; background: var(--success); margin-right: 7px; box-shadow: 0 0 0 2px #17432f; }
+  @media (max-width: 480px) {
+    body { justify-content: flex-start; padding-top: 28px; }
+    h1 { font-size: 16px; }
+    .crew { flex-wrap: wrap; max-width: 260px; row-gap: 2px; }
+    .mate { width: 60px; height: 58px; }
+    .mate svg { width: 42px; }
+    .ledge { margin-bottom: 52px; }
+    .panel { padding: 26px 18px 18px; }
+    .bubble { display: none; }
+    .moon { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mate svg, .sky i { animation: none; }
+  }
 </style>
-<script>
-  try { var t = localStorage.getItem('co-theme'); if (t) document.documentElement.dataset.theme = t } catch (e) {}
-</script>
 </head>
 <body>
-<button class="theme" type="button" id="theme">Dark</button>
-<main class="card">
-  <div class="brand">
-    <div class="logo">IH</div>
-    <div><b>IrvinHub</b><span>Claude Office</span></div>
+<div class="sky" aria-hidden="true">${stars}</div>
+<div class="moon" aria-hidden="true"></div>
+<main>
+  <h1>CLAUDE OFFICE</h1>
+  <p class="tag">Tim Claude Anda sedang bekerja. Silakan masuk.</p>
+  <ul class="crew" aria-label="Tim Claude">${crew}</ul>
+  <div class="ledge" aria-hidden="true"></div>
+  <div class="panel-wrap">
+  <div class="boss" aria-hidden="true">${mascotSvg('Me-1', { size: 44 })}</div>
+  <div class="bubble" aria-hidden="true">KERJA BAGUS, TIM!</div>
+  <section class="panel">
+    ${error ? `<div class="error" role="alert"><b>!</b><span>${esc(error)}</span></div>` : ''}
+    <form method="post" action="/login" id="form">
+      <input type="hidden" name="next" value="${esc(next)}">
+      <label for="user">USER ID</label>
+      <div class="field"><input id="user" name="user" autocomplete="username" value="${esc(user)}" required autofocus spellcheck="false" autocapitalize="off"></div>
+      <label for="password">PASSWORD</label>
+      <div class="field pw">
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button class="eye" type="button" id="eye" aria-label="Tampilkan password" aria-pressed="false">
+          <svg viewBox="0 0 10 7" shape-rendering="crispEdges" aria-hidden="true"><path fill="currentColor" d="M3 0h4v1H3zM1 1h2v1H1zM7 1h2v1H7zM0 2h1v3H0zM9 2h1v3H9zM1 5h2v1H1zM7 5h2v1H7zM3 6h4v1H3zM4 2h2v3H4z"/></svg>
+        </button>
+      </div>
+      <button class="submit" type="submit" id="go">&gt;&gt; MASUK KANTOR &lt;&lt;</button>
+    </form>
+    <div class="foot"><span><span class="dot"></span>${host ? esc(host) : 'online'}</span><span>sesi 30 hari</span></div>
+  </section>
   </div>
-  <h1>Welcome back</h1>
-  <p class="sub office">
-    <svg class="clawd" viewBox="0 0 11 9" aria-hidden="true"><path fill="var(--clay)" d="M1 0h9v6H1zM0 3h1v2H0zM10 3h1v2h-1zM2 6h1v3H2zM4 6h1v3H4zM6 6h1v3H6zM8 6h1v3H8z"/><path fill="#1f1410" d="M3 2h1v2H3zM7 2h1v2H7z"/></svg>
-    Login untuk melihat tim Claude Anda bekerja.
-  </p>
-  ${error ? `<div class="error" role="alert">${esc(error)}</div>` : ''}
-  <form method="post" action="/login" id="form">
-    <input type="hidden" name="next" value="${esc(next)}">
-    <label for="user">User ID</label>
-    <div class="field"><input id="user" name="user" autocomplete="username" value="${esc(user)}" required autofocus></div>
-    <label for="password">Password</label>
-    <div class="field pw">
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button class="eye" type="button" id="eye" aria-label="Tampilkan password">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
-      </button>
-    </div>
-    <button class="submit" type="submit" id="go">Sign in</button>
-  </form>
-  ${host ? `<p class="foot">${esc(host)}</p>` : ''}
 </main>
 <script>
-  var root = document.documentElement, btn = document.getElementById('theme');
-  function dark() { return root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches }
-  function label() { btn.textContent = dark() ? 'Light' : 'Dark' }
-  label();
-  btn.onclick = function () { root.dataset.theme = dark() ? 'light' : 'dark'; try { localStorage.setItem('co-theme', root.dataset.theme) } catch (e) {} label() };
-  var pw = document.getElementById('password');
-  document.getElementById('eye').onclick = function () { pw.type = pw.type === 'password' ? 'text' : 'password' };
-  document.getElementById('form').onsubmit = function () { var g = document.getElementById('go'); g.disabled = true; g.textContent = 'Signing in…' };
+  var pw = document.getElementById('password'), eye = document.getElementById('eye');
+  eye.onclick = function () { var show = pw.type === 'password'; pw.type = show ? 'text' : 'password'; eye.setAttribute('aria-pressed', String(show)) };
+  document.getElementById('form').onsubmit = function () { var g = document.getElementById('go'); g.disabled = true; g.textContent = 'MEMBUKA PINTU...' };
   if (document.getElementById('user').value) pw.focus();
 </script>
 </body>

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# =============================================================================
+# auto-update.sh — deploy new commits from GitHub (run by claude-office-update.timer)
+#
+# Reads /etc/claude-office/autoupdate.env (OFFICE_SRC = the git checkout,
+# OFFICE_DOMAIN, OFFICE_BRANCH), fetches the branch, and when it moved:
+# fast-forwards the checkout and runs install-vps.sh in auto mode. Never
+# touches a checkout with local changes or a diverged history.
+#
+# Test hook: OFFICE_INSTALL_CMD replaces the install step.
+# =============================================================================
+set -euo pipefail
+
+ENV_FILE="${OFFICE_AUTOUPDATE_ENV:-/etc/claude-office/autoupdate.env}"
+# shellcheck disable=SC1090
+[ -f "$ENV_FILE" ] && . "$ENV_FILE"
+SRC="${OFFICE_SRC:?OFFICE_SRC missing in $ENV_FILE}"
+DOMAIN="${OFFICE_DOMAIN:?OFFICE_DOMAIN missing in $ENV_FILE}"
+BRANCH="${OFFICE_BRANCH:-main}"
+LOCK="${OFFICE_AUTOUPDATE_LOCK:-/run/claude-office-update.lock}"
+
+exec 9>"$LOCK"
+flock -n 9 || { echo "Another update is running"; exit 0; }
+
+cd "$SRC"
+git fetch -q origin "$BRANCH"
+LOCAL="$(git rev-parse HEAD)"
+REMOTE="$(git rev-parse "origin/$BRANCH")"
+[ "$LOCAL" = "$REMOTE" ] && exit 0
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "Local changes in $SRC: not updating (git status to see them)" >&2
+  exit 1
+fi
+if ! git merge-base --is-ancestor "$LOCAL" "$REMOTE"; then
+  echo "History diverged in $SRC: not updating" >&2
+  exit 1
+fi
+
+echo "Updating ${LOCAL:0:7} -> ${REMOTE:0:7}"
+git merge -q --ff-only "origin/$BRANCH"
+if [ -n "${OFFICE_INSTALL_CMD:-}" ]; then
+  eval "$OFFICE_INSTALL_CMD"
+else
+  OFFICE_AUTO=1 bash "$SRC/deploy/install-vps.sh" "$DOMAIN"
+fi

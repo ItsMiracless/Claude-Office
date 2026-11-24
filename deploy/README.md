@@ -53,6 +53,30 @@ diberikan ke browser setelah login.
 Update di kemudian hari: `git pull`, lalu jalankan lagi perintah `install-vps.sh` yang
 sama. Token dan password login tidak berubah.
 
+## 2b. Auto-deploy dari GitHub (sekali saja)
+
+Setelah ini, setiap commit baru di `main` otomatis live dalam ±2 menit, tanpa
+token GitHub pribadi:
+
+```bash
+cd ~/claude-office && git pull
+```
+```bash
+sudo bash deploy/enable-auto-update.sh office.irvinhub.com
+```
+
+Skrip membuat **deploy key hanya-baca**, lalu mencetak *public key*-nya.
+Public key aman dibagikan. Tambahkan di GitHub → Claude-Office → Settings →
+Deploy keys (jangan centang *write access*), atau kirim ke Claude untuk
+ditambahkan. Setelah itu tekan Enter. Skrip memasang timer
+`claude-office-update.timer`, lalu langsung mendeploy versi terbaru.
+
+- Log: `journalctl -u claude-office-update -n 50`
+- Versi yang sedang live: header `X-Claude-Office-Version` di `/login`
+- Matikan: `sudo systemctl disable --now claude-office-update.timer`
+
+![Halaman login](../docs/images/login-pixel.png)
+
 ## 3. Sambungkan laptop
 
 Di laptop (macOS/Linux, atau Windows lewat WSL/Git Bash), dari folder project ini:
