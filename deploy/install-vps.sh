@@ -213,15 +213,16 @@ location = /_claude_office_auth {
     proxy_pass_request_body off;
     proxy_set_header Content-Length "";
     proxy_set_header Cookie \$http_cookie;
+    proxy_set_header X-Forwarded-Proto \$scheme;
 }
 location @claude_office_login { return 302 /login?next=\$request_uri; }
 
 # the office page: needs the login cookie
-location = /           { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
-location = /index.html { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
-location ^~ /assets/   { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
-location ^~ /sprites/  { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
-location ^~ /rooms/    { auth_request /_claude_office_auth; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+location = /           { auth_request /_claude_office_auth; auth_request_set \$co_cookie \$upstream_http_set_cookie; add_header Set-Cookie \$co_cookie; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+location = /index.html { auth_request /_claude_office_auth; auth_request_set \$co_cookie \$upstream_http_set_cookie; add_header Set-Cookie \$co_cookie; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+location ^~ /assets/   { auth_request /_claude_office_auth; auth_request_set \$co_cookie \$upstream_http_set_cookie; add_header Set-Cookie \$co_cookie; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+location ^~ /sprites/  { auth_request /_claude_office_auth; auth_request_set \$co_cookie \$upstream_http_set_cookie; add_header Set-Cookie \$co_cookie; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+location ^~ /rooms/    { auth_request /_claude_office_auth; auth_request_set \$co_cookie \$upstream_http_set_cookie; add_header Set-Cookie \$co_cookie; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
 
 # data routes + WebSocket: protected by the office token
 location / { include /etc/nginx/snippets/claude-office-proxy.conf; }

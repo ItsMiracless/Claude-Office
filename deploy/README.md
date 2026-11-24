@@ -11,7 +11,7 @@ Sesi cloud claude.ai/code ──token────┘        (login + token)
 
 ## Keamanan singkat
 
-- Halaman kantor dikunci dengan **halaman login** (User ID + password, sesi 30 hari).
+- Halaman kantor dikunci dengan **halaman login** (User ID + password, tetap login).
   Keluar: `https://office.irvinhub.com/logout`.
 - Semua data (sesi, prompt, balasan) dan koneksi live juga butuh **token kantor**.
   Tanpa token, server menjawab `401`, walaupun lolos login.
@@ -117,10 +117,20 @@ journalctl -u claude-office -f
 sudo systemctl restart claude-office claude-office-login
 ```
 
-## Ganti password login
+## Lupa / ganti password login
 
-Semua perangkat akan otomatis keluar dan perlu login ulang.
+Di VPS (User ID tidak membedakan huruf besar/kecil):
 
 ```bash
-sudo OFFICE_LOGIN_USER=irvin OFFICE_LOGIN_PASS='password-baru-panjang' bash deploy/install-vps.sh office.irvinhub.com
+cd ~/claude-office && sudo bash deploy/reset-login.sh
 ```
+
+Semua perangkat akan keluar dan perlu login ulang dengan password baru.
+
+## Lama sesi login
+
+Default: **tetap login** (permanen). Cookie diperpanjang otomatis setiap hari
+selama kantor dibuka, dan berakhir hanya kalau Anda logout, password diganti,
+atau browser menghapus cookie. Untuk membatasi, misalnya 30 hari, tambahkan
+`Environment=OFFICE_SESSION_DAYS=30` di `/etc/systemd/system/claude-office-login.service`,
+lalu jalankan `sudo systemctl daemon-reload && sudo systemctl restart claude-office-login`.

@@ -11,7 +11,8 @@
 //                       (/#token=…), so nobody needs the token link by hand
 //   GET  /logout        clear the cookie
 //   GET  /auth/check    204 with a valid session cookie, else 401
-//                       (?mode=redirect: a 302 to /login instead, for Caddy)
+//                       (?mode=redirect: a 302 to /login instead, for Caddy);
+//                       renews a permanent session's cookie once a day
 //
 // The office's data routes and WebSocket are not behind this: they demand the
 // office token themselves. This only keeps the page away from strangers.
@@ -34,7 +35,12 @@ const PORT = Number(process.env.OFFICE_LOGIN_PORT || 3340)
 const LOGIN_FILE = process.env.OFFICE_LOGIN_FILE || '/etc/claude-office/login.json'
 const TOKEN_FILE = process.env.OFFICE_TOKEN_FILE || path.join(process.env.AGENT_OFFICE_HOME || path.join(os.homedir(), '.agent-office'), 'auth-token')
 const COOKIE = 'co_session'
-const SESSION_DAYS = Number(process.env.OFFICE_SESSION_DAYS || 30)
+// 0 (the default) = stay signed in for good: the session never expires on the
+// server (changing the password signs every device out), and the cookie is
+// renewed while the office is used, since browsers cap a cookie at 400 days.
+const SESSION_DAYS = Number(process.env.OFFICE_SESSION_DAYS || 0)
+const COOKIE_MAX_AGE = (SESSION_DAYS > 0 ? Math.min(SESSION_DAYS, 400) : 400) * 86400
+const RENEW_AFTER_MS = 864e5 // renew the cookie at most once a day
 const SCRYPT = { N: 16384, r: 8, p: 1 }
 // The deployed commit (install-vps.sh writes APP_DIR/VERSION), shown as a header on /login
 const VERSION = (() => {
@@ -86,23 +92,34 @@ const b64 = (s) => Buffer.from(s).toString('base64url')
 const sign = (secret, payload) => createHmac('sha256', secret).update(payload).digest('base64url')
 
 function makeSession(login) {
-  const payload = b64(JSON.stringify({ u: login.user, exp: Date.now() + SESSION_DAYS * 864e5 }))
+  const now = Date.now()
+  const body = { u: login.user, iat: now }
+  if (SESSION_DAYS > 0) body.exp = now + SESSION_DAYS * 864e5
+  const payload = b64(JSON.stringify(body))
   return `${payload}.${sign(login.secret, payload)}`
 }
 
-function validSession(login, value) {
-  if (!login || typeof value !== 'string') return false
+/** The session's claims when the cookie is genuine and current, else null. */
+function readSession(login, value) {
+  if (!login || typeof value !== 'string') return null
   const [payload, mac] = value.split('.')
-  if (!payload || !mac) return false
+  if (!payload || !mac) return null
   const want = Buffer.from(sign(login.secret, payload))
   const got = Buffer.from(mac)
-  if (want.length !== got.length || !timingSafeEqual(want, got)) return false
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return null
   try {
-    const { u, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString())
-    return u === login.user && typeof exp === 'number' && exp > Date.now()
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString())
+    if (typeof claims.u !== 'string' || claims.u.toLowerCase() !== login.user.toLowerCase()) return null
+    if (claims.exp !== undefined && !(typeof claims.exp === 'number' && claims.exp > Date.now())) return null
+    if (SESSION_DAYS > 0 && claims.exp === undefined) return null // a permanent cookie after limits were turned on
+    return claims
   } catch {
-    return false
+    return null
   }
+}
+
+function validSession(login, value) {
+  return readSession(login, value) !== null
 }
 
 function cookies(req) {
@@ -333,7 +350,7 @@ function page({ host = '', next = '/', error = '', user = '' } = {}) {
       </div>
       <button class="submit" type="submit" id="go">&gt;&gt; MASUK KANTOR &lt;&lt;</button>
     </form>
-    <div class="foot"><span><span class="dot"></span>${host ? esc(host) : 'online'}</span><span>sesi 30 hari</span></div>
+    <div class="foot"><span><span class="dot"></span>${host ? esc(host) : 'online'}</span><span>${SESSION_DAYS > 0 ? `sesi ${SESSION_DAYS} hari` : 'tetap login'}</span></div>
   </section>
   </div>
 </main>
@@ -356,7 +373,14 @@ async function handle(req, res) {
   const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim()
 
   if (url.pathname === '/auth/check') {
-    if (validSession(login, cookies(req)[COOKIE])) { res.writeHead(204); return res.end() }
+    const claims = readSession(login, cookies(req)[COOKIE])
+    if (claims) {
+      // Keep a permanent session alive: a fresh cookie at most once a day
+      // (nginx passes it on with auth_request_set / add_header)
+      const stale = SESSION_DAYS === 0 && !(typeof claims.iat === 'number' && Date.now() - claims.iat < RENEW_AFTER_MS)
+      res.writeHead(204, stale ? { 'Set-Cookie': setCookie(req, makeSession(login), COOKIE_MAX_AGE) } : {})
+      return res.end()
+    }
     if (url.searchParams.get('mode') === 'redirect') {
       const next = safeNext(req.headers['x-forwarded-uri'] || '/')
       res.writeHead(302, { Location: `/login?next=${encodeURIComponent(next)}`, 'Cache-Control': 'no-store' })
@@ -395,7 +419,10 @@ async function handle(req, res) {
 
   if (locked(ip)) return send(res, 429, page({ host, next, user, error: 'Terlalu banyak percobaan. Coba lagi dalam 10 menit.' }))
 
-  const userOk = Buffer.from(user).length === Buffer.from(login.user).length && timingSafeEqual(Buffer.from(user), Buffer.from(login.user))
+  // The User ID ignores case ("Irvin" = "irvin"); the password does not
+  const userA = Buffer.from(user.toLowerCase())
+  const userB = Buffer.from(login.user.toLowerCase())
+  const userOk = userA.length === userB.length && timingSafeEqual(userA, userB)
   const hash = hashPassword(pass, Buffer.from(login.salt, 'hex')) // always hash: same time for a wrong user
   const passOk = timingSafeEqual(hash, Buffer.from(login.hash, 'hex'))
   if (!userOk || !passOk) {
@@ -408,7 +435,7 @@ async function handle(req, res) {
   console.log(`[login] ${login.user} signed in from ${ip}`)
   res.writeHead(303, {
     Location: landing(next),
-    'Set-Cookie': setCookie(req, makeSession(login), SESSION_DAYS * 86400),
+    'Set-Cookie': setCookie(req, makeSession(login), COOKIE_MAX_AGE),
     'Cache-Control': 'no-store',
   })
   res.end()
