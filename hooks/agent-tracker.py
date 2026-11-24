@@ -599,6 +599,23 @@ NAME_MAP = {
     'Explore':              'Explorer',
 }
 
+# Owner's own subagents (ItsMiracless/claude-workspace, .claude/agents/).
+# Each one borrows an existing desk/sprite role but keeps its own name in the
+# office, so a translation job never shows up as "Debugger" because its task
+# happened to mention a bug.
+CUSTOM_AGENTS = {
+    'pajak-analis-data':       ('database-architect',   'Analis Pajak'),
+    'pajak-riset-regulasi':    ('architect-reviewer',   'Riset Pajak'),
+    'pajak-sp2dk-pemeriksaan': ('security-auditor',     'SP2DK'),
+    'airbnb-analis':           ('performance-engineer', 'AirBNB'),
+    'penerjemah':              ('prompt-engineer',      'Penerjemah'),
+    'website-maintainer':      ('devops-engineer',      'Web Ops'),
+}
+
+def name_for(subagent_type, role):
+    custom = CUSTOM_AGENTS.get(subagent_type)
+    return custom[1] if custom else NAME_MAP.get(role, 'Agent')
+
 # General-purpose agents all share one sprite. Give them a specialist desk
 # when the task clearly says what they're doing; the server spreads the rest
 # across the least-used sprites.
@@ -615,6 +632,8 @@ TASK_ROLE_HINTS = [
 ]
 
 def role_for(subagent_type, task=''):
+    if subagent_type in CUSTOM_AGENTS:
+        return CUSTOM_AGENTS[subagent_type][0]
     role = ROLE_MAP.get(subagent_type, 'general-purpose')
     if role == 'general-purpose' and task:
         low = task.lower()
@@ -654,7 +673,7 @@ def tag_subagent(event):
         event['agentId']   = str(sub_agent_id)
         event['agentType'] = sub_agent_type or 'general-purpose'
         event['role']      = role_for(sub_agent_type)
-        event['name']      = NAME_MAP.get(event['role'], 'Agent')
+        event['name']      = name_for(sub_agent_type, event['role'])
     return event
 
 def error_summary(err, limit=60):
@@ -1319,7 +1338,7 @@ if tool_name in ('Agent', 'Task'):
         subagent_type = inp.get('subagent_type', '') or inp.get('agent_type', '')
 
         role = role_for(subagent_type, description)
-        name = NAME_MAP.get(role, 'Agent')
+        name = name_for(subagent_type, role)
 
         # Truncate task description for display
         task = description[:80] if description else 'Working on task'

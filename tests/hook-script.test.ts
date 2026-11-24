@@ -127,6 +127,18 @@ describe('agent-tracker.sh: Agent tool', () => {
     })?.agent).toMatchObject({ name: 'Explorer', role: 'Explore', agentType: 'Explore' })
   })
 
+  it('PreToolUse Agent for an owner subagent keeps its own name, whatever the task says', () => {
+    expect(runHook({
+      hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04A',
+      tool_input: { description: 'Translate the bug report', prompt: '...', subagent_type: 'penerjemah' },
+    })?.agent).toMatchObject({ name: 'Penerjemah', role: 'prompt-engineer', agentType: 'penerjemah' })
+
+    expect(runHook({
+      hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_04B',
+      tool_input: { description: 'Deploy irvinhub.com', prompt: '...', subagent_type: 'website-maintainer' },
+    })?.agent).toMatchObject({ name: 'Web Ops', role: 'devops-engineer', agentType: 'website-maintainer' })
+  })
+
   it('PostToolUse Agent (background launch) -> agent_linked with the subagent id', () => {
     expect(runHook({
       hook_event_name: 'PostToolUse',
