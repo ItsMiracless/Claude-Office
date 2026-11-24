@@ -123,7 +123,10 @@ TOKEN_FILE="$RUN_HOME/.agent-office/auth-token"
 for _ in $(seq 1 30); do [ -s "$TOKEN_FILE" ] && break; sleep 1; done
 [ -s "$TOKEN_FILE" ] || die "Server tidak membuat token. Lihat log: journalctl -u claude-office -n 50"
 TOKEN="$(cat "$TOKEN_FILE")"
-curl -fsS --max-time 5 "http://127.0.0.1:$PORT/health" >/dev/null || die "Server tidak menjawab. Lihat: journalctl -u claude-office -n 50"
+# Why a wait: on a re-run the token file already exists, so the loop above
+# returns at once while the restarted server is still starting up
+for _ in $(seq 1 30); do curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:$PORT/health" && break; sleep 1; done
+curl -fsS --max-time 5 -o /dev/null "http://127.0.0.1:$PORT/health" || die "Server tidak menjawab. Lihat: journalctl -u claude-office -n 50"
 echo "OK: kantor jalan di 127.0.0.1:$PORT"
 
 # --- 4. login page + HTTPS ---------------------------------------------------------
