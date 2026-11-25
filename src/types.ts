@@ -62,6 +62,7 @@ export interface Agent {
   scene?: AgentScene        // a signal's scene on the character that ran the command
   callout?: Callout         // the boss shouting a prompt across the office, and the Claude that heard it
   staffType?: string        // resident staff (src/residentStaff.ts): the subagent_type it stands for, idle or at work
+  runs?: string[]           // resident staff at work: every live run (server agent id) it stands for, across sessions
 }
 
 /**

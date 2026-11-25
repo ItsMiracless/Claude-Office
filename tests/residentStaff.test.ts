@@ -51,6 +51,8 @@ function run(state: OfficeState, steps: number, e: (now: number) => OfficeEnv, m
 const spawn = (agentType: string, id = `agent-${agentType}`, task = 'Cari dasar hukum PPN') =>
   ({ type: 'agent_spawned' as const, agent: { id, name: 'whatever the hook said', role: 'general-purpose', task, agentType, sessionId: 's1' } })
 
+const session = (sessionId: string) => ({ type: 'session_started' as const, sessionId, project: sessionId })
+
 afterEach(() => { setStaffRoster(undefined) })
 
 describe('roster (shared/staff.js)', () => {
@@ -124,8 +126,8 @@ describe('idle staff', () => {
     expect(desks.size - 1 - sitting.length).toBeGreaterThanOrEqual(STAFF_DESK_RESERVE)
     expect(sitting.length).toBeGreaterThan(0)
 
-    // Real workers take every desk, the ones idle staff sit at included...
-    for (let i = 0; i < desks.size; i++) s = reduceOffice(s, spawn('general-purpose', `w-${i}`), env()).state
+    // Real workers (sessions' Claudes) take every desk, the ones idle staff sit at included...
+    for (let i = 0; i < desks.size; i++) s = reduceOffice(s, session(`w-${i}`), env()).state
     const given = new Set(s.agents.filter(a => !isIdleStaff(a)).map(a => a.assignedSpotId))
     expect(sitting.every(a => given.has(a.visitSpotId))).toBe(true)
     // ...and whoever sat there gets up on the next frame
@@ -227,19 +229,66 @@ describe('called in, then back to the routine', () => {
     expect(r.state.agents.find(a => a.id === 'agent-website-maintainer')).toBeDefined()
   })
 
-  it('a subagent that is not staff walks in as a new worker, as before', () => {
+  it('a subagent that is not staff gets no character of its own in a staffed office', () => {
     const s0 = office()
     const r = reduceOffice(s0, spawn('general-purpose', 'agent-x'), env())
-    expect(r.state.agents).toHaveLength(s0.agents.length + 1)
-    expect(r.state.agents.find(a => a.id === 'agent-x')!.staffType).toBeUndefined()
+    expect(r.state.agents).toHaveLength(s0.agents.length)
+    expect(r.state.agents.some(a => a.id === 'agent-x')).toBe(false)
   })
 
-  it('a second run of the same subagent while the first works is an ordinary worker', () => {
+  it('a second run of the same subagent while the first works adds no duplicate character', () => {
     let s = reduceOffice(office(), spawn('penerjemah-pajak', 'agent-1'), env()).state
     const n = s.agents.length
     s = reduceOffice(s, spawn('penerjemah-pajak', 'agent-2'), env()).state
-    expect(s.agents).toHaveLength(n + 1)
-    expect(s.agents.find(a => a.id === 'agent-2')!.staffType).toBeUndefined()
+    expect(s.agents).toHaveLength(n)
+    expect(s.agents.filter(a => a.name === 'Christia')).toHaveLength(1)
+  })
+
+  it('one character per name across sessions: it shows the latest run and stays at work until every run is done', () => {
+    let s = reduceOffice(office(), { ...spawn('airbnb-analis', 'v-1'), agent: { ...spawn('airbnb-analis', 'v-1').agent, sessionId: 's1' } }, env()).state
+    s = reduceOffice(s, { ...spawn('airbnb-analis', 'v-2'), agent: { ...spawn('airbnb-analis', 'v-2').agent, sessionId: 's2' } }, env()).state
+    s = reduceOffice(s, { ...spawn('airbnb-analis', 'v-3'), agent: { ...spawn('airbnb-analis', 'v-3').agent, sessionId: 's3' } }, env()).state
+    expect(s.agents.filter(a => a.staffType === 'airbnb-analis')).toHaveLength(1)
+    s = run(s, 5, now => env({ now }), 1000, 1000)
+    s = reduceOffice(s, { type: 'agent_working', agentId: 'v-2', status: 'cek harga Canggu' }, env({ now: T0 + 6000 })).state
+    const valen = () => s.agents.find(a => a.staffType === 'airbnb-analis')!
+    expect(valen()).toMatchObject({ statusText: 'cek harga Canggu' })
+    const done = T0 + MIN_VISIBLE_TIME + 1000
+    s = reduceOffice(s, { type: 'agent_completed', agentId: 'v-1' }, env({ now: done })).state
+    s = reduceOffice(s, { type: 'agent_completed', agentId: 'v-3' }, env({ now: done })).state
+    expect(isIdleStaff(valen())).toBe(false)
+    s = reduceOffice(s, { type: 'agent_completed', agentId: 'v-2' }, env({ now: done })).state
+    expect(isIdleStaff(valen())).toBe(true)
+    expect(s.agents.filter(a => a.staffType === 'airbnb-analis')).toHaveLength(1)
+  })
+
+  it('a reload keeps a character at work while any of its runs is still listed', () => {
+    let s = reduceOffice(office(), spawn('airbnb-analis', 'v-1'), env()).state
+    s = reduceOffice(s, spawn('airbnb-analis', 'v-2'), env()).state
+    s = reduceOffice(s, spawn('airbnb-analis', 'v-2'), env()).state // a replayed spawn adds no run
+    expect(s.agents.find(a => a.staffType === 'airbnb-analis')!.runs).toEqual(['v-1', 'v-2'])
+    s = reduceOffice(s, {
+      type: 'snapshot',
+      activeAgents: [{ id: 'v-2', name: 'Valen', role: 'performance-engineer', task: 'x', state: 'working', agentType: 'airbnb-analis', sessionId: 's1' }],
+      sessions: [],
+    } as never, env()).state
+    expect(isIdleStaff(s.agents.find(a => a.staffType === 'airbnb-analis')!)).toBe(false)
+  })
+
+  it('a busy day of generic, repeated and stale workers still shows the boss, the 11 staff and the session\'s Claude', () => {
+    let s = reduceOffice(office(), session('s1'), env()).state
+    const generic = ['general-purpose', 'Explore', 'Plan', 'fork', 'web-fetch', 'claude', 'claude-code-guide', 'caveman:cavecrew-investigator', 'statusline-setup']
+    generic.forEach((t, i) => { s = reduceOffice(s, spawn(t, `g-${i}`), env()).state })
+    for (let i = 0; i < 3; i++) s = reduceOffice(s, spawn('backend-senior-engineer', `ll-${i}`), env()).state
+    // A reload whose snapshot still lists workers that never clocked out
+    s = reduceOffice(s, {
+      type: 'snapshot',
+      activeAgents: [...generic.map((t, i) => ({ id: `stale-${i}`, name: 'Agent', role: 'general-purpose', task: 'x', state: 'working', agentType: t, sessionId: 's1' })),
+        { id: 'll-0', name: 'Linglong', role: 'code-reviewer', task: 'audit', state: 'working', agentType: 'backend-senior-engineer', sessionId: 's1' }],
+      sessions: [{ id: 's1', project: 'claude-workspace', state: 'active' }],
+    } as never, env()).state
+    expect(s.agents).toHaveLength(1 + 11 + 1)
+    expect(s.agents.filter(a => a.name === 'Linglong')).toHaveLength(1)
   })
 
   it('a reload during the job: the snapshot puts the staff member to work', () => {
@@ -262,7 +311,7 @@ describe('called in, then back to the routine', () => {
 
   it('waits in the lobby when every desk is taken', () => {
     let s = office()
-    for (let i = 0; i < 12; i++) s = reduceOffice(s, spawn('general-purpose', `w-${i}`), env()).state
+    for (let i = 0; i < 12; i++) s = reduceOffice(s, session(`w-${i}`), env()).state
     expect(s.lobby.length).toBeGreaterThan(0)
     const r = reduceOffice(s, spawn('ui-ux-designer'), env())
     const adel = r.state.agents.find(a => a.id === 'agent-ui-ux-designer')!
