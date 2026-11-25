@@ -616,6 +616,7 @@ CUSTOM_AGENTS = {
     'ui-ux-designer':          ('frontend-developer',   'Adel'),
     'backend-senior-engineer': ('code-reviewer',        'Linglong'),
     'elaine':                  ('ai-engineer',          'Elaine'),
+    'researcher':              ('test-engineer',        'Researcher'),
 }
 
 def name_for(subagent_type, role):
