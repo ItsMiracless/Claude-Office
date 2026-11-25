@@ -63,6 +63,17 @@ export interface Agent {
   callout?: Callout         // the boss shouting a prompt across the office, and the Claude that heard it
   staffType?: string        // resident staff (src/residentStaff.ts): the subagent_type it stands for, idle or at work
   runs?: string[]           // resident staff at work: every live run (server agent id) it stands for, across sessions
+  mains?: Record<string, MainView> // a project's Claude standing for several sessions: each session's own main state
+}
+
+/** One session's main state on a Claude it shares with other sessions of its project (src/officeReducer.ts) */
+export interface MainView {
+  mainState?: MainState
+  needsYou?: NeedsYou
+  waitingOn?: number
+  statusText?: string
+  lastFailed?: boolean
+  at: number
 }
 
 /**

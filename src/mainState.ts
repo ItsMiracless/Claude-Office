@@ -24,6 +24,11 @@ export function isMainAgent(a: Pick<Agent, 'id'>): boolean {
   return a.id.startsWith(MAIN_ID_PREFIX)
 }
 
+/** The sessions a Claude stands for: its own, or every session of its project it carries (`mains`) */
+export function claudeSessions(a: Pick<Agent, 'id' | 'sessionId' | 'mains'>): string[] {
+  return a.mains ? Object.keys(a.mains) : a.sessionId && a.id === mainId(a.sessionId) ? [a.sessionId] : []
+}
+
 /**
  * Kinds that need a person at the keyboard right now — `registry` included:
  * Claude Code marks an unhooked session "waiting" exactly while a dialog or a

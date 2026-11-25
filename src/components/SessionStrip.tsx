@@ -21,7 +21,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { Agent, SessionInfo } from '../types'
-import { mainId, isMainAgent, mainTone, mainPillText, shortModel, projectFromCwd, type PillTone } from '../mainState'
+import { claudeSessions, isMainAgent, mainTone, mainPillText, shortModel, projectFromCwd, type PillTone } from '../mainState'
 import { clientLabel } from '../tools'
 import { t, useT } from '../i18n'
 
@@ -88,13 +88,15 @@ const SessionStrip: React.FC<SessionStripProps> = ({ sessions, agents }) => {
     <div className="session-strip" aria-label={tr('ui.sessions.ariaLabel')}>
       {ordered.map(session => {
         const unhooked = session.hooked === false
-        const claude = agents.find(a => a.id === mainId(session.id) && a.state !== 'completed')
+        const claude = agents.find(a => a.state !== 'completed' && claudeSessions(a).includes(session.id))
+        // A Claude shared by the repo's sessions keeps each one's own state for its pill
+        const own = claude?.mains?.[session.id] ?? claude
         const mine = agents.filter(a => a.sessionId === session.id && a.state !== 'completed' && !isMainAgent(a))
         const working = mine.filter(a => a.state === 'working')
         const ended = session.state === 'ended'
-        const mainState = claude?.mainState ?? session.main?.state
-        const needsYou = claude?.needsYou ?? session.main?.needsYou
-        const waitingOn = claude?.waitingOn ?? session.main?.waitingOn
+        const mainState = own?.mainState ?? session.main?.state
+        const needsYou = own?.needsYou ?? session.main?.needsYou
+        const waitingOn = own?.waitingOn ?? session.main?.waitingOn
         let tone: PillTone = ended ? 'ended' : mainTone(mainState, needsYou)
         // No main record yet (old server): busy while a worker types or Claude just used a tool
         if (!ended && mainState === undefined) {
@@ -109,7 +111,7 @@ const SessionStrip: React.FC<SessionStripProps> = ({ sessions, agents }) => {
           <div
             key={session.id}
             className={`session-pill ${tone}${unhooked ? ' unhooked' : ''}`}
-            title={describe(session, claude, mine.length, working.length)}
+            title={describe(session, claude && { ...claude, ...own }, mine.length, working.length)}
             data-session-id={session.id}
             data-main-state={mainState ?? ''}
             data-hooked={unhooked ? 'false' : 'true'}

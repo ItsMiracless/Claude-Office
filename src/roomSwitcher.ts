@@ -16,7 +16,7 @@ import { ROOMS, HUB_ROOM, OFFICE_ROOM, type RoomId } from './rooms'
 import { roomOf } from './roomTransfer'
 import { t } from './i18n'
 import { roomName, roomShort } from './roomText'
-import { isHardNeedsYou, mainId } from './mainState'
+import { isHardNeedsYou, claudeSessions } from './mainState'
 
 /**
  * What a room's mark says. `needs-you`: a session in there waits on a person
@@ -88,7 +88,7 @@ function needsYou(agent: Agent, pending: ReadonlySet<string>): boolean {
   if (agent.mainState === 'needs-you' && isHardNeedsYou(agent.needsYou)) return true
   // Why only the session's Claude: a card belongs to a session, and the mark
   // should lead to one place, the room its Claude is in
-  return !!agent.sessionId && agent.id === mainId(agent.sessionId) && pending.has(agent.sessionId)
+  return claudeSessions(agent).some(id => pending.has(id))
 }
 
 /** Whether something went wrong for this agent */
@@ -110,7 +110,7 @@ export function switcherModel(agents: readonly Agent[], facts: SwitcherFacts): P
   const pending = new Set(facts.pendingSessionIds ?? [])
   // Why: a card for a session with no Claude in the building (it has not been
   // seated yet) still waits on you; the office is where it will turn up
-  const seated = new Set(agents.filter(a => a.sessionId && a.id === mainId(a.sessionId)).map(a => a.sessionId!))
+  const seated = new Set(agents.flatMap(claudeSessions))
   const strayCard = [...pending].some(id => !seated.has(id))
 
   const ids = [...planOrder().filter(id => open.has(id)), HUB_ROOM]
