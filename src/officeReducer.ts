@@ -509,6 +509,11 @@ interface SpawnFields {
   agentType?: string
 }
 
+/** The office character a server agent id belongs to: itself, or the staff member that run joined */
+function characterFor(state: OfficeState, id: string | undefined): string | undefined {
+  return id && (state.agents.find(a => a.id === id) ?? state.agents.find(a => a.runs?.includes(id)))?.id || id
+}
+
 /**
  * Add an agent. With a free desk (or the filing cabinet) it walks in from the
  * door as a new hire; otherwise it waits in the lobby by the door and is
@@ -521,12 +526,20 @@ interface SpawnFields {
  */
 function spawnAgent(state: OfficeState, raw: SpawnFields, env: OfficeEnv, announce: boolean): OfficeResult {
   const id = raw.id ?? `agent-${env.now}`
-  if (state.agents.some(a => a.id === id)) return { state, effects: [] }
+  if (state.agents.some(a => a.id === id || a.runs?.includes(id))) return { state, effects: [] }
 
   // A resident staff member with nothing to do: that same character goes to work
   const member = staffMember(raw.agentType)
   const idleStaff = member ? state.agents.find(a => a.id === staffAgentId(member.agentType)) : undefined
   if (member && idleStaff) return claimStaff(state, idleStaff, member, { ...raw, id }, env, announce)
+  // One character per name: another run of a member already at work (any session) joins it
+  const busy = member ? state.agents.find(a => a.staffType === member.agentType) : undefined
+  if (busy) {
+    const runs = [...(busy.runs ?? [busy.id]), id]
+    return { state: { ...state, agents: state.agents.map(a => (a.id === busy.id ? { ...a, runs, task: raw.task ?? a.task, sessionId: raw.sessionId ?? a.sessionId, project: raw.project ?? a.project } : a)) }, effects: [] }
+  }
+  // A staffed office seats only its staff: a generic subagent gets no stranger's character (the chat still shows it)
+  if (raw.agentType && state.agents.some(a => a.staffType)) return { state, effects: [] }
 
   const name = raw.name ?? 'Agent'
   const role = raw.role ?? 'general-purpose'
@@ -657,6 +670,7 @@ function releaseStaff(state: OfficeState, agent: Agent, member: StaffMember, eff
   const back: Agent = {
     ...agent,
     id: sid,
+    runs: undefined,
     state: 'idle',
     task: member.title,
     statusText: t('ui.staff.offDuty'),
@@ -1202,7 +1216,7 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
 
     // ── Agent started working / status update ──────────────────────────────
     case 'agent_working': {
-      const id = action.agentId ?? action.agent?.id
+      const id = characterFor(state, action.agentId ?? action.agent?.id)
       const statusMsg = action.status ?? workMessage()
       // 🚫 auto mode refused the call (PermissionDenied), ❌ it errored, ⚡ it runs
       const icon = action.denied ? '🚫' : action.failed ? '❌' : '⚡'
@@ -1248,10 +1262,14 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
 
     // ── Agent completed task ───────────────────────────────────────────────
     case 'agent_completed': {
-      const id = action.agentId ?? action.agent?.id
+      const run = action.agentId ?? action.agent?.id
+      const id = characterFor(state, run)
       if (!id) return none
       const agent = state.agents.find(a => a.id === id)
       if (!agent || agent.state === 'completed') return none
+      // A character working several runs stays at work until the last one is done
+      const left = agent.runs?.filter(r => r !== run)
+      if (left?.length) return { state: { ...state, agents: state.agents.map(a => (a.id === id ? { ...a, runs: left } : a)) }, effects: [] }
       // Keep a quick agent visible for a moment: re-dispatch once it has been
       // in the office long enough
       const meta = state.meta[id]
@@ -1286,7 +1304,7 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
           }
           continue
         }
-        if (a.id === BOSS_ID || a.id === CLAUDE_ID || isMainAgent(a) || isIdleStaff(a) || a.state === 'completed' || byId.has(a.id)) continue
+        if (a.id === BOSS_ID || a.id === CLAUDE_ID || isMainAgent(a) || isIdleStaff(a) || a.state === 'completed' || byId.has(a.id) || a.runs?.some(r => byId.has(r))) continue
         const r = completeAgent(cur, a.id, t('ui.office.clockedOutAway'), env, true)
         cur = r.state
         effects.push(...r.effects)

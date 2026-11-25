@@ -286,8 +286,8 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
         // The label names what ships (the target, else the project), so it stands in for the project tag
         <div className="char-scene">{scene.label ?? tr('ui.character.shipping')}</div>
       ) : staff ? (
-        // Resident staff wear their name, with the project while they work for one
-        <div className="char-project char-staff">{projectTag ? `${staff.name} · ${projectTag}` : staff.name}</div>
+        // Resident staff wear just their name, whichever session they work for
+        <div className="char-project char-staff">{staff.name}</div>
       ) : projectTag && (
         <div className="char-project">{projectTag}</div>
       )}
