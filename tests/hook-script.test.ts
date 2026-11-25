@@ -11,7 +11,7 @@
 
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createHash, createHmac } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1184,6 +1184,33 @@ describe('agent-tracker.sh: the bash wrapper', () => {
   }
 
   const session = { session_id: 's-wrap', cwd: '/home/me/proj', transcript_path: '/t/s-wrap.jsonl' }
+
+  it('cloud session: AGENT_OFFICE_TOKEN becomes the 0600 token + bearer header files, sent with -H @file, never on argv', async () => {
+    const home = join(dir, 'cloud-home')
+    const token = 'ab'.repeat(32)
+    const run = await runScript(
+      { ...session, prompt_id: 'p-cloud', hook_event_name: 'UserPromptSubmit', prompt: 'from the cloud' },
+      { AGENT_OFFICE_HOME: home, AGENT_OFFICE_TOKEN: token, AGENT_OFFICE_EVENT_URL: 'https://office.example.com/event' },
+    )
+    expect(run.status).toBe(0)
+    expect(readFileSync(join(home, 'auth-token'), 'utf8')).toBe(`${token}\n`)
+    expect(readFileSync(join(home, 'auth-header'), 'utf8')).toBe(`Authorization: Bearer ${token}\n`)
+    expect(statSync(join(home, 'auth-header')).mode & 0o777).toBe(0o600)
+    expect(run.args).toContain(`@${join(home, 'auth-header')}`)
+    expect(run.args?.some(a => a.includes(token))).toBe(false)
+  })
+
+  it('cloud session: a non-hex AGENT_OFFICE_TOKEN is ignored and an existing header file always wins', async () => {
+    const bad = join(dir, 'cloud-bad')
+    await runScript({ ...session, hook_event_name: 'UserPromptSubmit', prompt: 'x' }, { AGENT_OFFICE_HOME: bad, AGENT_OFFICE_TOKEN: 'not a token; rm -rf /' })
+    expect(existsSync(join(bad, 'auth-header'))).toBe(false)
+
+    const kept = join(dir, 'cloud-kept')
+    mkdirSync(kept)
+    writeFileSync(join(kept, 'auth-header'), 'Authorization: Bearer keepme\n')
+    await runScript({ ...session, hook_event_name: 'UserPromptSubmit', prompt: 'x' }, { AGENT_OFFICE_HOME: kept, AGENT_OFFICE_TOKEN: 'cd'.repeat(32) })
+    expect(readFileSync(join(kept, 'auth-header'), 'utf8')).toBe('Authorization: Bearer keepme\n')
+  })
 
   it('run through a chain of relative symlinks in a directory with a space, it still finds agent-tracker.py and posts', async () => {
     // ~/bin/hook.sh -> ../links/mid.sh -> <checkout>/hooks/agent-tracker.sh

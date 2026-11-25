@@ -40,6 +40,17 @@
 # Where the office listens: AGENT_OFFICE_STATUS_URL wins, else the port from
 # AGENT_OFFICE_PORT (the same knob as agent-tracker.sh and the office
 # scripts), default 3334
+# Cloud sessions without a token file: AGENT_OFFICE_TOKEN (set in the cloud
+# environment's variables) is written once to the same 0600 files
+# deploy/connect-laptop.sh writes, so everything below reads it as usual.
+# Only a hex token is accepted; an existing file always wins.
+_office_home="${AGENT_OFFICE_HOME:-$HOME/.agent-office}"
+if [ -n "${AGENT_OFFICE_TOKEN:-}" ] && [ ! -f "$_office_home/auth-header" ] \
+   && [[ "$AGENT_OFFICE_TOKEN" =~ ^[0-9a-f]{32,128}$ ]]; then
+    ( umask 077; mkdir -p "$_office_home" \
+      && printf '%s\n' "$AGENT_OFFICE_TOKEN" > "$_office_home/auth-token" \
+      && printf 'Authorization: Bearer %s\n' "$AGENT_OFFICE_TOKEN" > "$_office_home/auth-header" ) 2>/dev/null || true
+fi
 # A remote office (office.example.com on a VPS): ~/.agent-office/server-url
 # holds its base URL, written by deploy/connect-laptop.sh. The environment
 # variable still wins. Remote requests get more time than loopback ones.
