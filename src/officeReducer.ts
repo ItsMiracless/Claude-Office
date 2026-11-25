@@ -43,7 +43,7 @@
  * answered by the chat bot). Incident mode hears the same signals in App.tsx.
  */
 
-import { Agent, AgentScene, type EffectKind, OfficeEvent, Position, SignalEvent, SnapshotAgent, ServerHealth, SessionInfo, SessionMain, MainState, NeedsYou, AGENT_CONFIGS } from './types'
+import { Agent, AgentScene, type EffectKind, OfficeEvent, Position, SignalEvent, SnapshotAgent, ServerHealth, SessionInfo, SessionMain, MainState, MainView, NeedsYou, AGENT_CONFIGS } from './types'
 import { ROOMS, AgentSpot, HUB_ROOM, OFFICE_ROOM, getFreeSpot, findSpot, type RoomId } from './rooms'
 import {
   beginTransfer, stepTransfer, settleTransfer, planRoomMoves, heldSpotIds, roomOf, inOffice,
@@ -867,10 +867,73 @@ function mcpDone(state: OfficeState, server: string, sessionId: string | undefin
 // Sessions: one Claude per terminal
 // ---------------------------------------------------------------------------
 
+/**
+ * The id of the Claude standing for a session: its own (`main-<sid>`), or its
+ * project's Claude it joined (`mains`). '' when it dropped out of a shared
+ * Claude that still carries its old id.
+ */
+function claudeIdFor(state: OfficeState, sessionId: string): string {
+  const own = mainId(sessionId)
+  const a = state.agents.find(x => (x.mains ? sessionId in x.mains : x.id === own))
+  return a ? a.id : state.agents.some(x => x.id === own) ? '' : own
+}
+
 /** The session's Claude, if it is in the office (a leaver no longer counts) */
 function findMain(state: OfficeState, sessionId: string): Agent | undefined {
-  const a = state.agents.find(x => x.id === mainId(sessionId))
+  const id = claudeIdFor(state, sessionId)
+  const a = id ? state.agents.find(x => x.id === id) : undefined
   return a && a.state !== 'completed' ? a : undefined
+}
+
+/** One session's own main state: its entry on a shared Claude, else the Claude itself */
+function sessionView(state: OfficeState, sessionId: string): MainView | undefined {
+  const a = findMain(state, sessionId)
+  return a?.mains ? a.mains[sessionId] : a && viewOf(a, 0)
+}
+
+function viewOf(a: Agent, at: number): MainView {
+  return { mainState: a.mainState, needsYou: a.needsYou, waitingOn: a.waitingOn, statusText: a.statusText, lastFailed: a.lastFailed, at }
+}
+
+/** What a shared Claude shows: the session that needs you most, the latest one on a tie */
+const MAIN_RANK: Record<MainState, number> = { 'needs-you': 6, error: 5, working: 4, compacting: 3, waiting: 2, idle: 1 }
+function topSession(mains: Record<string, MainView>): [string, MainView] {
+  const rank = (v: MainView) => (v.mainState ? MAIN_RANK[v.mainState] : 0)
+  return Object.entries(mains).reduce((best, cur) => (rank(cur[1]) > rank(best[1]) || (rank(cur[1]) === rank(best[1]) && cur[1].at > best[1].at) ? cur : best))
+}
+
+/** Redraw a shared Claude from its sessions (after one changed, joined or left) */
+function showTop(state: OfficeState, id: string, mains: Record<string, MainView>, env: OfficeEnv, since?: number): OfficeState {
+  const [sid, top] = topSession(mains)
+  const cur = { ...state, agents: state.agents.map(a => (a.id === id ? { ...a, mains, sessionId: sid } : a)) }
+  return applyMain(cur, id, { mainState: top.mainState ?? null, needsYou: top.needsYou, waitingOn: top.waitingOn, statusText: top.statusText, lastFailed: top.lastFailed, since }, env)
+}
+
+/** A session's main state changed: on its own Claude as before, on a shared one through its entry */
+function applySession(state: OfficeState, sessionId: string, patch: MainPatch, env: OfficeEnv): OfficeState {
+  const agent = findMain(state, sessionId)
+  if (!agent) return state
+  if (!agent.mains) return applyMain(state, agent.id, patch, env)
+  const prev = agent.mains[sessionId] ?? { at: env.now }
+  const mainState = patch.mainState === undefined ? prev.mainState : (patch.mainState ?? undefined)
+  const keep = mainState === 'compacting'
+  const view: MainView = {
+    mainState,
+    needsYou: mainState === 'needs-you' || keep ? (patch.needsYou ?? prev.needsYou) : undefined,
+    waitingOn: mainState === 'waiting' || keep ? (patch.waitingOn ?? prev.waitingOn) : undefined,
+    statusText: patch.statusText ?? prev.statusText,
+    lastFailed: patch.lastFailed ?? prev.lastFailed,
+    at: env.now,
+  }
+  return showTop(state, agent.id, { ...agent.mains, [sessionId]: view }, env, patch.since)
+}
+
+/** A session leaves a shared Claude (true), or the Claude is its own (false: the caller walks it out) */
+function leaveShared(state: OfficeState, sessionId: string, env: OfficeEnv): OfficeState | null {
+  const agent = findMain(state, sessionId)
+  if (!agent?.mains || !(sessionId in agent.mains)) return null
+  const mains = without(agent.mains, sessionId)
+  return Object.keys(mains).length ? showTop(state, agent.id, mains, env) : null
 }
 
 /** How many Claudes share the office right now (two or more: chat lines carry the project) */
@@ -951,7 +1014,7 @@ function waitingText(n: number): string {
 }
 
 /** Claude's status line when PostCompact puts it back where it was */
-function restoredStatus(state: MainState, claude: Agent): string | undefined {
+function restoredStatus(state: MainState, claude: Pick<Agent, 'waitingOn' | 'needsYou'>): string | undefined {
   switch (state) {
     case 'working':   return t('ui.office.backToWorkTyping')
     case 'idle':      return t('ui.office.turnOver')
@@ -978,11 +1041,21 @@ interface SessionFields {
  * through the door.
  */
 function ensureClaude(state: OfficeState, sessionId: string, info: SessionFields, env: OfficeEnv): OfficeResult & { created: boolean } {
-  const id = mainId(sessionId)
-  const existing = state.agents.find(a => a.id === id)
-  if (existing && existing.state !== 'completed') return { state, effects: [], created: false }
+  if (findMain(state, sessionId)) return { state, effects: [], created: false }
   if (sessionId in state.endedSessions) return { state, effects: [], created: false }
+  const project = info.project ?? projectFromCwd(info.cwd)
 
+  // One Claude per project: another session of a repo that has its Claude (PC, cloud, a second terminal) joins it
+  const id = mainId(sessionId)
+  const mate = state.agents.find(a => isMainAgent(a) && a.state !== 'completed' && (a.id === id || (!!project && a.project === project)))
+  if (mate) {
+    const mains = { ...(mate.mains ?? { [mate.sessionId ?? sessionId]: viewOf(mate, env.now) }), [sessionId]: { at: env.now } }
+    let joined = showTop(state, mate.id, mains, env)
+    if (info.main) joined = applySession(joined, sessionId, fromServerMain(info.main), env)
+    return { state: joined, effects: [], created: false }
+  }
+
+  const existing = state.agents.find(a => a.id === id)
   let cur = state
   if (existing) {
     cur = {
@@ -993,7 +1066,6 @@ function ensureClaude(state: OfficeState, sessionId: string, info: SessionFields
       pendingStatus: without(cur.pendingStatus, id),
     }
   }
-  const project = info.project ?? projectFromCwd(info.cwd)
   const cfg = cfgFor(CLAUDE_ROLE)
   // Why: another AI tool's session (codex:…) gets that tool's name, not Claude's
   const tool = clientLabel(sessionId)
@@ -1041,7 +1113,7 @@ function bossShout(state: OfficeState, claude: Agent, bubble: string): OfficeRes
 function endSession(state: OfficeState, sessionId: string, reason: string | undefined, env: OfficeEnv): OfficeResult {
   let cur: OfficeState = { ...state, endedSessions: { ...state.endedSessions, [sessionId]: env.now } }
   const effects: OfficeEffect[] = [{ kind: 'schedule', action: { type: 'session_claude_leave', sessionId, endedAt: env.now }, delayMs: SESSION_CLAUDE_GRACE_MS }]
-  if (findMain(cur, sessionId)) cur = applyMain(cur, mainId(sessionId), { mainState: null, statusText: reason ? t('ui.office.sessionEndedReason', { reason }) : t('ui.office.sessionEnded') }, env)
+  cur = applySession(cur, sessionId, { mainState: null, statusText: reason ? t('ui.office.sessionEndedReason', { reason }) : t('ui.office.sessionEnded') }, env)
   return { state: cur, effects }
 }
 
@@ -1193,16 +1265,15 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
   const mainThreadWorking = (sessionId: string, statusMsg: string, failed: boolean, origin: SessionFields, icon: string): OfficeResult => {
     if (sessionId in state.endedSessions) return none
     const ensured = ensureClaude(state, sessionId, origin, env)
-    const id = mainId(sessionId)
-    const before = ensured.state.agents.find(a => a.id === id)
+    const before = sessionView(ensured.state, sessionId)
     // Why: an MCP question blocks only the call that asked; other calls of the
     // batch run beside it, so the hand stays up (the server keeps it too)
     // until the answer, that call's end or the turn's end lowers it
     const keepHand = before?.mainState === 'needs-you' && before.needsYou?.kind === 'elicitation'
     const cur = keepHand
       ? ensured.state
-      : applyMain(ensured.state, id, { mainState: 'working', statusText: statusMsg, lastFailed: failed }, env)
-    const claude = cur.agents.find(a => a.id === id)
+      : applySession(ensured.state, sessionId, { mainState: 'working', statusText: statusMsg, lastFailed: failed }, env)
+    const claude = findMain(cur, sessionId)
     if (!claude) return none
     return { state: cur, effects: [...ensured.effects, claudeMsg(cur, claude, `${icon} ${statusMsg}`)] }
   }
@@ -1342,8 +1413,10 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
         const bySid = new Map(listed.map(s => [s.id, s]))
         for (const a of cur.agents) {
           if (!isMainAgent(a) || a.state === 'completed') continue
-          const sid = a.sessionId ?? a.id.slice(mainId('').length)
-          if (bySid.has(sid)) continue
+          const sids = a.mains ? Object.keys(a.mains) : [a.sessionId ?? a.id.slice(mainId('').length)]
+          // A shared Claude stays while any of its sessions is listed; the others drop out of it
+          for (const sid of sids.filter(x => !bySid.has(x))) cur = leaveShared(cur, sid, env) ?? cur
+          if (sids.some(x => bySid.has(x))) continue
           cur = completeAgent(cur, a.id, t('ui.office.clockedOutAway'), env, true).state
         }
         for (const s of listed) {
@@ -1360,8 +1433,8 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
           cur = r.state
           effects.push(...r.effects)
           if (!r.created) {
-            const id = mainId(s.id)
-            if (s.main) cur = applyMain(cur, id, fromServerMain(s.main), env)
+            const id = claudeIdFor(cur, s.id)
+            if (s.main) cur = applySession(cur, s.id, fromServerMain(s.main), env)
             cur = { ...cur, agents: cur.agents.map(a => (a.id === id ? { ...a, project: s.project ?? a.project, model: s.model ?? a.model } : a)) }
           }
         }
@@ -1525,9 +1598,9 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       const r = ensureClaude(base, sid, { project: action.project, cwd: action.cwd, model: action.model, main: action.main }, env)
       if (r.created) return r
       // Already here (a resume, or compaction's SessionStart): refresh what the server knows
-      const id = mainId(sid)
       let cur = r.state
-      if (action.main) cur = applyMain(cur, id, fromServerMain(action.main), env)
+      const id = claudeIdFor(cur, sid)
+      if (action.main) cur = applySession(cur, sid, fromServerMain(action.main), env)
       const project = action.project ?? projectFromCwd(action.cwd)
       cur = { ...cur, agents: cur.agents.map(a => (a.id === id ? { ...a, project: project ?? a.project, model: action.model ?? a.model } : a)) }
       return { state: cur, effects: r.effects }
@@ -1554,6 +1627,9 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       const cur: OfficeState = { ...state, endedSessions: without(state.endedSessions, sid) }
       const claude = findMain(cur, sid)
       if (!claude) return { state: cur, effects: [] }
+      // Other sessions of the repo still use this Claude: only this one leaves it
+      const shared = leaveShared(cur, sid, env)
+      if (shared) return { state: shared, effects: [] }
       const r = completeAgent(cur, claude.id, t('ui.office.clockedOut'), env, true)
       return { state: r.state, effects: [...r.effects, claudeMsg(cur, claude, t('ui.office.clockedOutMsg'))] }
     }
@@ -1565,7 +1641,7 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       const ensured = ensureClaude(state, sid, { project: action.project, cwd: action.cwd }, env)
       let cur = ensured.state
       const effects = [...ensured.effects]
-      const id = mainId(sid)
+      const id = claudeIdFor(cur, sid)
       const claude = cur.agents.find(a => a.id === id)
       if (!claude) return none
       const serverState = action.main?.state
@@ -1576,7 +1652,7 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
         const workerId = action.wakeupOfficeId ?? action.wakeupAgentId
         const worker = workerId ? cur.agents.find(a => a.id === workerId) : undefined
         const label = worker ? t('ui.office.reportedBack', { name: worker.name }) : t('ui.office.reportedBackBare')
-        cur = applyMain(cur, id, { mainState: serverState ?? 'working', statusText: label }, env)
+        cur = applySession(cur, sid, { mainState: serverState ?? 'working', statusText: label }, env)
         effects.push(claudeMsg(cur, claude, label))
         return { state: cur, effects }
       }
@@ -1591,7 +1667,7 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       // Why a sound here: the boss no longer walks over, so the shout is the one
       // sign a prompt went out; the cue is a soft pop (src/sounds.ts playPrompt)
       effects.push(...shout.effects, { kind: 'sfx', sfx: 'prompt' })
-      cur = applyMain(cur, id, { mainState: serverState ?? 'working', statusText: summary ? `✍ ${summary}` : t('ui.office.workingOnPrompt') }, env)
+      cur = applySession(cur, sid, { mainState: serverState ?? 'working', statusText: summary ? `✍ ${summary}` : t('ui.office.workingOnPrompt') }, env)
       return { state: cur, effects }
     }
 
@@ -1615,7 +1691,7 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       const ensured = ensureClaude(state, sid, { project: action.project, cwd: action.cwd }, env)
       let cur = ensured.state
       const effects = [...ensured.effects]
-      const id = mainId(sid)
+      const id = claudeIdFor(cur, sid)
       const claude = cur.agents.find(a => a.id === id)
       if (!claude) return none
       if (action.text) effects.push(claudeMsg(cur, claude, action.text, 'reply'))
@@ -1623,8 +1699,8 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       const serverState = action.main?.state
       const next: MainState = serverState === 'waiting' || (serverState === undefined && waitingOn > 0) ? 'waiting' : serverState ?? 'idle'
       cur = next === 'waiting'
-        ? applyMain(cur, id, { mainState: 'waiting', waitingOn, statusText: waitingText(waitingOn) }, env)
-        : applyMain(cur, id, { mainState: next, statusText: next === 'idle' ? t('ui.office.turnOver') : undefined, since: action.main?.since }, env)
+        ? applySession(cur, sid, { mainState: 'waiting', waitingOn, statusText: waitingText(waitingOn) }, env)
+        : applySession(cur, sid, { mainState: next, statusText: next === 'idle' ? t('ui.office.turnOver') : undefined, since: action.main?.since }, env)
       // Why only when it goes idle: Claude has answered and it is your turn; a turn
       // that ends with background work still running is not over yet
       if (next === 'idle') effects.push({ kind: 'sfx', sfx: 'reply' })
@@ -1638,12 +1714,12 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       const ensured = ensureClaude(state, sid, { project: action.project, cwd: action.cwd }, env)
       let cur = ensured.state
       const effects = [...ensured.effects]
-      const id = mainId(sid)
+      const id = claudeIdFor(cur, sid)
       const claude = cur.agents.find(a => a.id === id)
       if (!claude) return none
       // The server's record already says it is over: follow it
       if (action.main && action.main.state !== 'needs-you') {
-        return { state: applyMain(cur, id, fromServerMain(action.main), env), effects }
+        return { state: applySession(cur, sid, fromServerMain(action.main), env), effects }
       }
       const fromServer = action.main?.needsYou ?? action.needsYou
       const fresh: NeedsYou = {
@@ -1658,12 +1734,13 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       // that carries a different `since` is a new wait of the same shape — a second worker asking
       // for the same command, a second agent-input — and is announced; an older server sends no
       // `since` and the shape alone decides.
-      const same = claude.mainState === 'needs-you' && !!claude.needsYou && claude.needsYou.kind === fresh.kind
-        && claude.needsYou.toolName === fresh.toolName && claude.needsYou.summary === fresh.summary
-        && (fromServer?.since === undefined || fromServer.since === claude.needsYou.since)
-      const needsYou = same ? claude.needsYou! : fresh
+      const mine = sessionView(cur, sid)
+      const same = mine?.mainState === 'needs-you' && !!mine.needsYou && mine.needsYou.kind === fresh.kind
+        && mine.needsYou.toolName === fresh.toolName && mine.needsYou.summary === fresh.summary
+        && (fromServer?.since === undefined || fromServer.since === mine.needsYou.since)
+      const needsYou = same ? mine.needsYou! : fresh
       const label = needsYouLabel(needsYou)
-      cur = applyMain(cur, id, { mainState: 'needs-you', needsYou, statusText: label }, env)
+      cur = applySession(cur, sid, { mainState: 'needs-you', needsYou, statusText: label }, env)
       if (!same) {
         effects.push(claudeMsg(cur, claude, label))
         if (isHardNeedsYou(needsYou)) effects.push({ kind: 'sfx', sfx: 'needsYou' })
@@ -1677,15 +1754,15 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       if (!sid) return none
       const claude = findMain(state, sid)
       if (!claude) return none
-      const id = claude.id
-      if (action.main) return { state: applyMain(state, id, fromServerMain(action.main), env), effects: [] }
-      const wait = claude.mainState === 'needs-you' ? claude.needsYou : undefined
+      if (action.main) return { state: applySession(state, sid, fromServerMain(action.main), env), effects: [] }
+      const mine = sessionView(state, sid)
+      const wait = mine?.mainState === 'needs-you' ? mine.needsYou : undefined
       const answers = !!wait && wait.kind === 'permission' && (action.batch === true || (!!action.toolName && wait.toolName === action.toolName))
       if (!answers) return none
       const what = action.batch !== true ? t('ui.office.toolRan', { tool: action.toolName ?? '' })
         : typeof action.count === 'number' ? t('ui.office.toolBatchDone', { count: action.count })
         : t('ui.office.toolBatchDoneUnknown')
-      const cur = applyMain(state, id, { mainState: 'working', statusText: `⚡ ${what}` }, env)
+      const cur = applySession(state, sid, { mainState: 'working', statusText: `⚡ ${what}` }, env)
       return { state: cur, effects: [claudeMsg(cur, claude, t('ui.office.permissionAnswered', { what }))] }
     }
 
@@ -1695,13 +1772,13 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       if (!sid || !action.main) return none
       const ensured = ensureClaude(state, sid, { project: action.project, cwd: action.cwd, main: action.main }, env)
       if (ensured.created) return ensured
-      const id = mainId(sid)
-      const before = ensured.state.agents.find(a => a.id === id)
+      const before = findMain(ensured.state, sid)
       if (!before) return none
-      const cur = applyMain(ensured.state, id, fromServerMain(action.main), env)
+      const wasUp = sessionView(ensured.state, sid)?.mainState === 'needs-you'
+      const cur = applySession(ensured.state, sid, fromServerMain(action.main), env)
       const effects = [...ensured.effects]
       // The hand came down without a prompt or a tool call of ours: say why
-      if (before.mainState === 'needs-you' && action.main.state !== 'needs-you') {
+      if (wasUp && action.main.state !== 'needs-you') {
         effects.push(claudeMsg(cur, before, `${action.main.state === 'working' ? '✅' : '💤'} ${action.reason ?? t('ui.office.handDown')}`))
       }
       return { state: cur, effects }
@@ -1712,11 +1789,10 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       const sid = action.sessionId
       if (!sid) return none
       const ensured = ensureClaude(state, sid, { project: action.project, cwd: action.cwd }, env)
-      const id = mainId(sid)
-      const claude = ensured.state.agents.find(a => a.id === id)
+      const claude = findMain(ensured.state, sid)
       if (!claude) return none
       const label = action.error ? t('ui.office.apiErrorWhat', { error: action.error }) : t('ui.office.apiError')
-      const cur = applyMain(ensured.state, id, { mainState: action.main?.state ?? 'error', statusText: label }, env)
+      const cur = applySession(ensured.state, sid, { mainState: action.main?.state ?? 'error', statusText: label }, env)
       return {
         state: cur,
         effects: [...ensured.effects, claudeMsg(cur, claude, label + (action.detail ? t('ui.office.detail', { detail: action.detail }) : '')), { kind: 'sfx', sfx: 'error' }],
@@ -1730,13 +1806,15 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       const ensured = ensureClaude(state, sid, { project: action.project, cwd: action.cwd }, env)
       let cur = ensured.state
       const effects = [...ensured.effects]
-      const id = mainId(sid)
+      const id = claudeIdFor(cur, sid)
       const claude = cur.agents.find(a => a.id === id)
       if (!claude) return none
       const meta = cur.meta[id] ?? newMeta(env.now)
       if (action.phase !== 'post') {
-        const beforeCompact = claude.mainState === 'compacting' ? meta.beforeCompact : claude.mainState
-        cur = applyMain(cur, id, { mainState: 'compacting', statusText: t('ui.office.memoryWipe') }, env)
+        // shortcut: one beforeCompact per Claude, so two sessions of a repo compacting at once restore the later one's state
+        const mainNow = sessionView(cur, sid)?.mainState
+        const beforeCompact = mainNow === 'compacting' ? meta.beforeCompact : mainNow
+        cur = applySession(cur, sid, { mainState: 'compacting', statusText: t('ui.office.memoryWipe') }, env)
         cur = { ...cur, meta: { ...cur.meta, [id]: { ...cur.meta[id], beforeCompact } } }
         effects.push(claudeMsg(cur, claude, action.trigger ? t('ui.office.memoryWipeTrigger', { trigger: action.trigger }) : t('ui.office.memoryWipe')))
         return { state: cur, effects }
@@ -1744,8 +1822,8 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       // Back to where it was: the server's record when it sends one, else what we remembered
       const back: MainState = action.main?.state ?? meta.beforeCompact ?? 'working'
       cur = action.main
-        ? applyMain(cur, id, fromServerMain(action.main), env)
-        : applyMain(cur, id, { mainState: back, statusText: restoredStatus(back, claude) }, env)
+        ? applySession(cur, sid, fromServerMain(action.main), env)
+        : applySession(cur, sid, { mainState: back, statusText: restoredStatus(back, sessionView(cur, sid) ?? claude) }, env)
       cur = { ...cur, meta: { ...cur.meta, [id]: { ...cur.meta[id], beforeCompact: undefined } } }
       return { state: cur, effects }
     }
@@ -1769,8 +1847,8 @@ function reduceEvent(state: OfficeState, action: OfficeAction, env: OfficeEnv): 
       const sid = action.sessionId
       if (!sid || !action.model) return none
       const ensured = ensureClaude(state, sid, { project: action.project, cwd: action.cwd, model: action.model }, env)
-      const id = mainId(sid)
       const cur = ensured.state
+      const id = claudeIdFor(cur, sid)
       return { state: { ...cur, agents: cur.agents.map(a => (a.id === id ? { ...a, model: action.model } : a)) }, effects: ensured.effects }
     }
 
