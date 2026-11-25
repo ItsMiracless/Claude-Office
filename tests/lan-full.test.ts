@@ -418,7 +418,7 @@ describe('the full-mode listener', () => {
 
   beforeAll(async () => {
     uiDir = makeUiDir()
-    office = await loadOffice({ env: { AGENT_OFFICE_UI_DIR: uiDir } })
+    office = await loadOffice({ env: { AGENT_OFFICE_UI_DIR: uiDir, AGENT_OFFICE_LOGIN_HEADER: '1' } })
     loopbackUrl = `ws://127.0.0.1:${await listen(office.server.httpServer)}/ws`
     // Watch-only first, so a viewer key exists to be refused
     viewerKey = (await office.server.startLan({ host: '127.0.0.1', port: 0 })).key
@@ -641,6 +641,10 @@ describe('the full-mode listener', () => {
     // The prompt text is not stored as a chat line either; the refusal is
     expect(await chatText()).not.toContain('run the deploy from the phone')
     expect(await chatText()).toContain('Only the office page on this Mac')
+    // ...also on an online office (AGENT_OFFICE_LOGIN_HEADER) with a forged login header: the LAN gate never queues
+    const forged = await phone('post', '/chat').set('X-Office-Login', 'ok').send({ sender: 'Boss', text: '@alpha forged login' })
+    expect(forged.status).toBe(401)
+    expect(office.server.promptQueue.list(SID)).toEqual([])
   })
 
   it('refuses any other Host (421) or Origin (403), with the secret and for the static files alike', async () => {

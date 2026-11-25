@@ -274,6 +274,8 @@ describe('GET /config and the port-derived surfaces (AGENT_OFFICE_PORT=4000)', (
       version: expect.stringMatching(/^\d+\.\d+\.\d+/),
       // the default resident staff roster (shared/resident-staff.json)
       staff: expect.arrayContaining([expect.objectContaining({ agentType: 'elaine', name: 'Elaine', manager: true })]),
+      // only the online office (AGENT_OFFICE_LOGIN_HEADER) takes prompts through its proxy
+      remotePrompts: false,
     })
   })
 

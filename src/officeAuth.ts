@@ -67,18 +67,25 @@ export function officeAuthHeaders(opts: {
 
 type PageLoc = { protocol: string; hostname: string }
 
+// GET /config's remotePrompts (src/config.ts): the online office behind its
+// login page takes prompts from its signed-in page through the proxy too
+let remotePrompts = false
+export function setRemotePrompts(on: boolean): void { remotePrompts = on }
+
 /**
  * Whether this page may queue a prompt for a session from the chat
- * (`@<session> <prompt>`, server/prompt-queue.js): the office page on this
- * machine's loopback holding the UI token from its trusted snapshot. A phone
- * or a page through a proxy name never may; the server refuses them too.
+ * (`@<session> <prompt>`, server/prompt-queue.js): the office page holding
+ * the UI token from its trusted snapshot, on this machine's loopback or,
+ * when the server says so, through the online office's proxy. The phone's
+ * LAN listener never may; the server decides in the end either way.
  * @param opts.loc the page location (tests pass a fake)
  * @param opts.uiToken the snapshot's UI token (tests pass it)
+ * @param opts.remotePrompts the server's remotePrompts (tests pass it)
  * @returns true when the page holds what the server asks for
  */
-export function canQueuePrompts(opts: { loc?: PageLoc; uiToken?: string | null } = {}): boolean {
+export function canQueuePrompts(opts: { loc?: PageLoc; uiToken?: string | null; remotePrompts?: boolean } = {}): boolean {
   const loc = opts.loc ?? (typeof window !== 'undefined' ? window.location : { protocol: 'http:', hostname: '127.0.0.1' })
-  if (isPhoneFullLocation(loc) || isProxiedPage(loc)) return false
+  if (isPhoneFullLocation(loc) || (isProxiedPage(loc) && !(opts.remotePrompts ?? remotePrompts))) return false
   const ui = opts.uiToken !== undefined ? opts.uiToken : getUiToken()
   return !!ui
 }

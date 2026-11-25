@@ -1228,6 +1228,7 @@
       "sessionEnded": "sesinya sudah selesai",
       "ambiguous": "🤔 {mention} cocok dengan {count} sesi: {names}. Pakai id sesi saja.",
       "notTrusted": "🔒 Hanya halaman kantor di Mac ini yang bisa mengantrekan prompt untuk {name} (bukan ponsel, halaman lewat proxy, atau halaman tanpa link kantor)",
+      "notSignedIn": "🔒 Hanya halaman kantor yang sudah login yang bisa mengantrekan prompt untuk {name} (login ulang di /login; link ponsel, hook, dan skrip tidak bisa)",
       "noHooks": "🔌 {name} tidak punya hook kantor, jadi tidak ada yang akan mengantarkan prompt: jalankan {command} lalu mulai ulang sesi itu",
       "tooLong": "panjangnya {length} karakter, batasnya {limit}",
       "full": "sudah ada {count} prompt yang menunggu untuknya",

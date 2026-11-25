@@ -67,7 +67,9 @@
 # and when the office answers with a prompt and a proof over that nonce the
 # script prints {"decision": "block", "reason": ...}, so Claude carries on
 # with the prompt instead of stopping. Each claim removes the prompt it gets,
-# so this never loops. Without the marker, Stop is backgrounded as always.
+# so this never loops. Without the marker, Stop is backgrounded as always —
+# except for a remote office (https), whose markers are on its own disk: there
+# every Stop claims in the foreground.
 #
 # PermissionRequest is the other event that may print: what a PermissionRequest
 # hook writes on stdout answers the dialog. When the office is allowed to

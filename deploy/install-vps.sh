@@ -95,6 +95,9 @@ fi
 # --- 3. service ----------------------------------------------------------------
 say "Pasang service systemd: claude-office"
 NODE_BIN="$(command -v node)"
+# Only the nginx site below sets X-Office-Login from the login cookie (and
+# drops any copy a client sent): trust it there and nowhere else
+LOGIN_HEADER=0; command -v nginx >/dev/null 2>&1 && LOGIN_HEADER=1
 cat > /etc/systemd/system/claude-office.service <<EOF
 [Unit]
 Description=Claude Office (pixel office for Claude Code sessions)
@@ -107,6 +110,7 @@ WorkingDirectory=$APP_DIR
 Environment=NODE_ENV=production
 Environment=AGENT_OFFICE_PORT=$PORT
 Environment=AGENT_OFFICE_ALLOWED_HOSTS=$DOMAIN
+Environment=AGENT_OFFICE_LOGIN_HEADER=$LOGIN_HEADER
 ExecStart=$NODE_BIN server/index.js
 Restart=always
 RestartSec=3
@@ -195,6 +199,8 @@ proxy_set_header Host \$host;
 proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
 proxy_set_header X-Forwarded-Proto \$scheme;
 proxy_set_header X-Forwarded-Host \$host;
+# Set by nginx only (location = /chat, from the login cookie); a client's copy never passes
+proxy_set_header X-Office-Login \$claude_office_login;
 proxy_set_header Upgrade \$http_upgrade;
 proxy_set_header Connection \$claude_office_connection;
 proxy_read_timeout 3600s;
@@ -203,6 +209,8 @@ proxy_buffering off;
 EOF2
   cat > /etc/nginx/snippets/claude-office-locations.conf <<EOF2
 client_max_body_size 5m;
+# Empty unless location = /chat found a valid login cookie (an empty header is not sent)
+set \$claude_office_login "";
 
 # login page (cookie session)
 location = /login  { proxy_pass http://127.0.0.1:$LOGIN_PORT; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-Proto \$scheme; proxy_set_header X-Forwarded-Host \$host; }
@@ -210,6 +218,14 @@ location = /logout { proxy_pass http://127.0.0.1:$LOGIN_PORT; proxy_set_header H
 location = /_claude_office_auth {
     internal;
     proxy_pass http://127.0.0.1:$LOGIN_PORT/auth/check;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header Cookie \$http_cookie;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+}
+location = /_claude_office_login_state {
+    internal;
+    proxy_pass http://127.0.0.1:$LOGIN_PORT/auth/check?mode=soft;
     proxy_pass_request_body off;
     proxy_set_header Content-Length "";
     proxy_set_header Cookie \$http_cookie;
@@ -223,6 +239,10 @@ location = /index.html { auth_request /_claude_office_auth; auth_request_set \$c
 location ^~ /assets/   { auth_request /_claude_office_auth; auth_request_set \$co_cookie \$upstream_http_set_cookie; add_header Set-Cookie \$co_cookie; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
 location ^~ /sprites/  { auth_request /_claude_office_auth; auth_request_set \$co_cookie \$upstream_http_set_cookie; add_header Set-Cookie \$co_cookie; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
 location ^~ /rooms/    { auth_request /_claude_office_auth; auth_request_set \$co_cookie \$upstream_http_set_cookie; add_header Set-Cookie \$co_cookie; error_page 401 = @claude_office_login; include /etc/nginx/snippets/claude-office-proxy.conf; }
+
+# the chat: open to token holders as before; a signed-in browser also gets
+# X-Office-Login, which `@<session> <prompt>` needs (docs/reference.md)
+location = /chat       { auth_request /_claude_office_login_state; auth_request_set \$claude_office_login \$upstream_http_x_office_login; auth_request_set \$co_cookie \$upstream_http_set_cookie; add_header Set-Cookie \$co_cookie; include /etc/nginx/snippets/claude-office-proxy.conf; }
 
 # data routes + WebSocket: protected by the office token
 location / { include /etc/nginx/snippets/claude-office-proxy.conf; }
@@ -308,6 +328,8 @@ $DOMAIN {
 	}
 	# data routes + WebSocket: protected by the office token
 	reverse_proxy 127.0.0.1:$PORT {
+		# X-Office-Login is nginx's alone (prompts from the chat stay off here)
+		header_up -X-Office-Login
 		flush_interval -1
 	}
 }

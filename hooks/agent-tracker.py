@@ -239,11 +239,14 @@ if hook_event == 'Stop':
     # so only the shape Claude Code uses is looked up (no '/' or '..').
     # Why also with stop_hook_active: each claim removes the prompt it gets,
     # so a run of continuations ends when the queue (at most 5) is empty.
+    # A remote office (https: a laptop or a cloud session sending to the VPS)
+    # keeps its markers on its own disk, so such a Stop always claims: one
+    # foreground request, and nothing printed when nothing waits.
     sid = SESSION.get('sessionId', '')
     claim = ''
     if re.fullmatch(r'[A-Za-z0-9_-]{1,80}', sid):
         home = os.environ.get('AGENT_OFFICE_HOME') or os.path.join(os.path.expanduser('~'), '.agent-office')
-        if os.path.exists(os.path.join(home, 'prompt-queue', sid)):
+        if os.environ.get('OFFICE_POST_URL', '').startswith('https://') or os.path.exists(os.path.join(home, 'prompt-queue', sid)):
             claim = os.urandom(16).hex()
             event['claim'] = True
             event['nonce'] = claim

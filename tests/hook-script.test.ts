@@ -1625,6 +1625,16 @@ describe('agent-tracker.sh: a prompt queued in the office chat (Stop claims it)'
     expect(runHookLines({ session_id: SID, cwd: '/home/me/alpha', hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, { AGENT_OFFICE_HOME: home })).toHaveLength(1)
   })
 
+  it('the Python: a remote office (https) keeps its markers on its own disk, so every Stop there claims; loopback still needs the marker', () => {
+    const remote = { OFFICE_POST_URL: 'https://office.example.com/event' }
+    const lines = runHookLines(stop, remote)
+    expect(lines).toHaveLength(3)
+    expect(JSON.parse(lines[0])).toMatchObject({ claim: true, nonce: lines[2] })
+    expect(runHookLines(stop, { OFFICE_POST_URL: 'http://127.0.0.1:3334/event' })).toHaveLength(1)
+    expect(runHookLines({ ...stop, session_id: '../x' }, remote)).toHaveLength(1)
+    expect(runHookLines({ session_id: SID, cwd: '/home/me/alpha', hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, remote)).toHaveLength(1)
+  })
+
   type Hit = { method: string; url: string; auth?: string; sig?: string; body: string }
   /** A fake office answering every request with `reply(hit)` (null: never answers). */
   async function fakeOffice(reply: (hit: Hit) => unknown) {
