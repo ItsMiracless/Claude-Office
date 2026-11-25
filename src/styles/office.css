@@ -474,6 +474,23 @@
   z-index: 9;
 }
 
+/* Sat in a chair (src/deskChairs.ts): at a desk the sprite is lifted onto
+   the seat and its legs are cut short, as if bent at the knee over the
+   seat's edge. Facing away (seated-rear) the
+   chair's backrest is drawn over the lower back (the chair is one z above);
+   facing us (seated-front) the sitter is in front of the backrest. `top`
+   rather than a transform: the stack's idle and typing animations own its
+   transform. The chair has its own shadow, so the feet's is hidden. */
+.character-wrapper.seated .char-sprite-stack {
+  top: calc(-1 * var(--seat-lift, 13px));
+}
+.character-wrapper.seated .char-sprite {
+  clip-path: inset(0 0 var(--seat-legs, 4.5%) 0);
+}
+.character-wrapper.seated .char-shadow {
+  display: none;
+}
+
 /* Unread agent-to-agent messages — small envelope badge over the head */
 .char-unread {
   position: absolute;

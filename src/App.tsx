@@ -58,6 +58,7 @@ import RoomBackdrop from './components/RoomBackdrop'
 import RoomSwitcher from './components/RoomSwitcher'
 import DoorLinks from './components/DoorLinks'
 import { ROOMS, OFFICE_ROOM, findSpot, type RoomId } from './rooms'
+import { deskChairs, SEATED_SPOT_TYPES } from './deskChairs'
 import { openRoomSet, previewAllRooms } from './roomAccess'
 import { roomOf, TRANSFER_MAX_MS } from './roomTransfer'
 import { switcherModel, viewableRoom } from './roomSwitcher'
@@ -136,6 +137,8 @@ function makeMsgId() { return -(nextMsgId++) }
 const MAIN_WAYPOINTS = MAIN_ROOM.waypoints ?? []
 // Where people stand at the water cooler (it bubbles while someone is there)
 const WATER_SPOTS = MAIN_ROOM.agentSpots.filter(s => s.type === 'water')
+// A swivel chair at every desk, drawn with the room's furniture (src/deskChairs.ts)
+const DESK_CHAIRS = deskChairs(MAIN_ROOM.agentSpots)
 // The main room's desks for the ?screens= preview, with whether their screens face us
 const PREVIEW_DESKS = MAIN_ROOM.furniture
   .filter(f => DESK_GEOMETRY[f.sprite])
@@ -1560,7 +1563,7 @@ const App: React.FC = () => {
   // Why memoised: a fresh object each render would re-render every furniture sprite
   const printedPage = useMemo(() => printJob(lastSignal), [lastSignal])
   // Why: a new items array every frame would re-render all 24 furniture sprites
-  const furnitureItems = useMemo(() => MAIN_ROOM.furniture.map(item => {
+  const furnitureItems = useMemo(() => [...MAIN_ROOM.furniture, ...DESK_CHAIRS].map(item => {
     if (item.id === 'filing-1' && filesOpen) return { ...item, sprite: 'filing-open' }
     const stateOverride = furnitureStates[item.id]
     if (!stateOverride) return item
@@ -1669,6 +1672,8 @@ const App: React.FC = () => {
             const atDesk = Math.abs(agent.position.x - seatAt.x) < 1 &&
                            Math.abs(agent.position.y - seatAt.y) < 1
             const zOverride = atDesk && spot?.zIndex ? spot.zIndex : undefined
+            // At a desk: sat in its chair (src/deskChairs.ts SEATED_SPOT_TYPES)
+            const seat = atDesk && spot && SEATED_SPOT_TYPES.has(spot.type) ? spot.type : undefined
 
             const meta = officeRef.current?.meta[agent.id]
             const idleDurationMs =
@@ -1682,6 +1687,7 @@ const App: React.FC = () => {
                 agent={agent}
                 idleDurationMs={idleDurationMs}
                 zIndex={zOverride}
+                seat={seat}
                 isTyping={typingAgents.has(agent.id)}
                 showProject={activeSessionCount > 1}
                 // Idle resident staff are nobody the server knows: nothing to inspect

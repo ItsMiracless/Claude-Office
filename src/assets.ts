@@ -28,6 +28,13 @@ export const ASSETS: Record<string, SpriteAsset> = {
   'desk-standing-left-rear':   { path: '/sprites/furniture/standing-desk-left-rear.png', width: 84, height: 102, category: 'furniture' },
   'desk-standing-right-front': { path: '/sprites/furniture/standing-desk-right-front.png', width: 84, height: 106, category: 'furniture' },
   'desk-standing-right-rear':  { path: '/sprites/furniture/standing-desk-right-rear.png', width: 84, height: 102, category: 'furniture' },
+  // Desk chairs (src/deskChairs.ts): the meeting room's swivel chair, turned four ways
+  // by scripts/desk-chairs.py. Why smaller than the meeting room's: a sitter's head
+  // and shoulders must clear the backrest (a character is ~34 px wide and tall)
+  'desk-chair-front-left':     { path: '/sprites/furniture/desk-chair-front-left.webp', width: 26, height: 40, category: 'furniture' },
+  'desk-chair-front-right':    { path: '/sprites/furniture/desk-chair-front-right.webp', width: 26, height: 40, category: 'furniture' },
+  'desk-chair-rear-left':      { path: '/sprites/furniture/desk-chair-rear-left.webp', width: 27, height: 36, category: 'furniture' },
+  'desk-chair-rear-right':     { path: '/sprites/furniture/desk-chair-rear-right.webp', width: 27, height: 36, category: 'furniture' },
   // Filing cabinet: 312x422 → ~52x70, scaled 1.2x
   'filing-closed':             { path: '/sprites/furniture/filling-closed.png', width: 42, height: 56, category: 'furniture' },
   'filing-open':               { path: '/sprites/furniture/filling-open.png', width: 46, height: 60, category: 'furniture' },

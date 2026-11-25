@@ -9,6 +9,7 @@ import SpeechBubble from './SpeechBubble'
 import ResilientImg from './ResilientImg'
 import EffectBubble from './EffectBubble'
 import { getEffect } from '../agentManager'
+import { seatLift } from '../deskChairs'
 import { staffMember, staffLabel } from '../residentStaff'
 import { ROLE_TO_CHAR, BOSS_ROLE } from '../config'
 import { getSpritePath, useTheme } from '../theme'
@@ -26,6 +27,8 @@ interface CharacterProps {
   idleDurationMs?: number
   /** Override z-index (for agents sitting behind desks) */
   zIndex?: number
+  /** At a seat (a desk): that spot's type, and the character sits in its chair (src/deskChairs.ts) */
+  seat?: string
   /** Show typing indicator (about to post a Slack message) */
   isTyping?: boolean
   /** Show the agent's project (its Claude Code session) — when several sessions share the office */
@@ -95,7 +98,7 @@ const OPPOSITE: Record<SpriteDirection, SpriteDirection> = {
   'rear-right': 'front-left',
 }
 
-const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex, isTyping, showProject, onClick, inspected }) => {
+const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex, seat, isTyping, showProject, onClick, inspected }) => {
   const tr = useT()
   const prevPosRef = useRef({ x: agent.position.x, y: agent.position.y })
   const lastMoveRef = useRef(0) // when this character last changed position (ms)
@@ -123,6 +126,9 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
     agent.state === 'coffee-break' || agent.state === 'completed' || agent.state === 'changing-room'
 
   // Calculate movement direction when walking
+  // Why not while moving: a walker passing over a seat's spot does not sit down
+  const sitting = !!seat && !isMoving
+
   const dx = agent.position.x - prevPosRef.current.x
   const dy = agent.position.y - prevPosRef.current.y
 
@@ -140,13 +146,15 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
     directionRef.current = getDirectionFromDelta(dx, dy)
   } else if (!isMoving && agent.spriteFacing) {
     // At a spot — use the spot's facing direction (or opposite if turned around)
-    directionRef.current = turnedAround ? OPPOSITE[agent.spriteFacing] : agent.spriteFacing
+    // Why not turned round while sitting: the chair is drawn facing the desk, so a
+    // sitter who looked round would have the backrest in front of their face
+    directionRef.current = turnedAround && !sitting ? OPPOSITE[agent.spriteFacing] : agent.spriteFacing
   }
   prevPosRef.current = { x: agent.position.x, y: agent.position.y }
 
   // Randomly turn around while working at desk for random durations
   useEffect(() => {
-    if (agent.state !== 'working') {
+    if (agent.state !== 'working' || sitting) {
       setTurnedAround(false)
       return
     }
@@ -177,7 +185,7 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
       cancelledRef.current = true
       clearTimeout(timeout)
     }
-  }, [agent.state])
+  }, [agent.state, sitting])
 
   const animState = getAnimState(agent.state)
   const charBase = getCharBase(agent.role)
@@ -202,6 +210,10 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
     ? SANTA_HAT
     : spooky && !(spooky.kind === 'mask' && facingAway) ? spooky : null
   const head = useHeadAnchor(spriteSrc, piece !== null)
+  // Sat facing away: the figure's height (its top measured like a hat's) sets how high it sits
+  const sitHead = useHeadAnchor(standingSrc, sitting && facingAway)
+  const spriteHeight = agent.id.startsWith('boss-') ? 85 : 78
+  const lift = sitting && seat ? seatLift(seat, facingAway, sitHead ? (1 - sitHead.top) * spriteHeight : undefined) : 0
   // A mask on a listed sprite goes by its eye holes (src/eyes.ts), not by the head
   const facingRight = directionRef.current.endsWith('right')
   const key = spriteKey(standingSrc)
@@ -251,12 +263,13 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
 
   return (
     <div
-      className={`character-wrapper state-${animState}${mainState ? ` main-${mainState}` : ''}${scene ? ` scene-${scene.kind}` : ''}${onClick ? ' clickable' : ''}${inspected ? ' inspected' : ''}`}
+      className={`character-wrapper state-${animState}${sitting ? ` seated seated-${directionRef.current.startsWith('rear') ? 'rear' : 'front'}` : ''}${mainState ? ` main-${mainState}` : ''}${scene ? ` scene-${scene.kind}` : ''}${onClick ? ' clickable' : ''}${inspected ? ' inspected' : ''}`}
       style={{
         left: `${agent.position.x}%`,
         top: `${agent.position.y}%`,
         transform: 'translate(-50%, -100%)',
         zIndex: speaking ? SPEAKING_Z : zIndex ?? Math.round(agent.position.y),
+        ...(sitting ? { '--seat-lift': `${lift}px` } as React.CSSProperties : null),
       }}
       title={projectTag || main || staff ? tooltip : undefined}
       data-main-state={mainState}
@@ -311,7 +324,7 @@ const Character: React.FC<CharacterProps> = ({ agent, idleDurationMs = 0, zIndex
             alt={agent.name}
             className="char-sprite"
             style={{
-              height: agent.id.startsWith('boss-') ? 85 : 78,
+              height: spriteHeight,
               width: 'auto',
               filter: `drop-shadow(0 0 1px ${agent.color}) drop-shadow(0 0 0.5px #000)`,
             }}
