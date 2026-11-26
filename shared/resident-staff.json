@@ -9,5 +9,6 @@
   { "agentType": "website-maintainer",      "name": "Dion",     "title": "Web Ops",          "role": "devops-engineer" },
   { "agentType": "ui-ux-designer",          "name": "Adel",     "title": "UI/UX Designer",   "role": "frontend-developer" },
   { "agentType": "backend-senior-engineer", "name": "Linglong", "title": "Backend Engineer", "role": "code-reviewer" },
-  { "agentType": "researcher",              "name": "Researcher", "title": "Riset Tools",    "role": "test-engineer" }
+  { "agentType": "researcher",              "name": "Researcher", "title": "Riset Tools",    "role": "test-engineer" },
+  { "agentType": "qa-security-reviewer",    "name": "Sasha",    "title": "QA & Security",    "role": "debugger" }
 ]
