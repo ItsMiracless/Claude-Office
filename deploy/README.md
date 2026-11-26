@@ -15,6 +15,8 @@ Sesi cloud claude.ai/code ──token────┘        (login + token)
   Keluar: `https://office.irvinhub.com/logout`.
 - Semua data (sesi, prompt, balasan) dan koneksi live juga butuh **token kantor**.
   Tanpa token, server menjawab `401`, walaupun lolos login.
+- Perintah `@nama-sesi` dari chat hanya diterima dari halaman kantor yang sudah
+  login (lihat bagian 5).
 - Hook mengirim token lewat header dari file berizin `600`, jadi token tidak pernah
   muncul di command line.
 - Token = kunci rumah. Jangan dibagikan atau di-commit ke git.
@@ -109,6 +111,38 @@ Sesi cloud berjalan di container Anthropic, jadi butuh dua hal di environment cl
 
 Minta Claude di sesi cloud untuk menyiapkan keduanya. Network secret diisi lewat
 formulir aman, tidak lewat chat.
+
+## 5. Kirim perintah ke sesi dari chat (`@nama-sesi`)
+
+Di kantor online, ketik di chat **#office-general**:
+
+```
+@nama-sesi jalankan test lalu perbaiki yang gagal
+```
+
+Saat mengetik `@`, chat menawarkan nama sesi yang bisa dikirimi (Tab memilih yang
+pertama). Namanya juga terlihat di kartu sesi di kantor: nama sesi Claude Code
+(`/rename`), atau judul/project-nya. Perintah menunggu di kantor dan diambil hook
+**Stop** sesi itu, lalu chat menulis *📬 … picked up the prompt*.
+
+- **Sesi yang sedang bekerja** menerima perintah begitu gilirannya selesai.
+- **Sesi yang diam** (menunggu di kotak input) baru menerima saat giliran
+  *berikutnya* selesai: beri sesi itu apa saja di terminalnya dulu. Hook tidak
+  bisa membangunkan sesi yang diam.
+- Batas: 5 perintah antre per sesi, 2000 karakter per perintah, kedaluwarsa
+  1 jam, hilang bila server restart atau sesi berakhir.
+- Sesi laptop/cloud perlu hook versi ini (`connect-laptop.sh` lagi, atau setup
+  script cloud mengambil versi terbaru) dan token kantor di sesi itu
+  (file token atau `AGENT_OFFICE_TOKEN`) untuk memeriksa bukti HMAC. Hook remote
+  bertanya ke kantor di setiap Stop (satu request, maks. ±6 detik bila kantor
+  tidak menjawab).
+
+Pengaman: hanya **halaman kantor yang sudah login** yang bisa mengantre perintah.
+nginx memeriksa cookie login untuk `/chat` dan baru menambahkan header
+`X-Office-Login` (header yang sama dari browser selalu dibuang); server juga
+meminta UI token halaman kantor dan koneksi dari nginx di mesin yang sama. Token
+kantor (hook/laptop) dan link ponsel Wi-Fi tidak bisa. Ditolak? Chat menulis
+*🔒 Only the signed-in office page …*: login ulang di `/login`.
 
 ## Perintah berguna di VPS
 

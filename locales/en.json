@@ -1383,6 +1383,7 @@
       "sessionEnded": "the session ended",
       "ambiguous": "🤔 {mention} matches {count} sessions: {names}. Use the session id instead.",
       "notTrusted": "🔒 Only the office page on this Mac can queue a prompt for {name} (not the phone, a page through a proxy, or a page without the office link)",
+      "notSignedIn": "🔒 Only the signed-in office page can queue a prompt for {name} (sign in again at /login; the phone link, hooks and scripts cannot)",
       "noHooks": "🔌 {name} has no office hooks, so nothing would deliver the prompt: run {command} and restart that session",
       "tooLong": "it is {length} characters, the limit is {limit}",
       "full": "{count} prompts are already waiting for it",

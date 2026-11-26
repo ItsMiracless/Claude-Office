@@ -148,6 +148,11 @@ describe('chatPostHeaders / canQueuePrompts: who may queue a prompt from the cha
     // The phone page sends the phone secret only (none held here), never the UI token
     expect(chatPostHeaders({ loc: phone, uiToken: UI })).toEqual({})
   })
+  it('the online office (GET /config remotePrompts) lets its proxied page queue with the UI token; the phone never', () => {
+    expect(canQueuePrompts({ loc: proxied, uiToken: UI, remotePrompts: true })).toBe(true)
+    expect(canQueuePrompts({ loc: proxied, uiToken: null, remotePrompts: true })).toBe(false)
+    expect(canQueuePrompts({ loc: phone, uiToken: UI, remotePrompts: true })).toBe(false)
+  })
 })
 
 describe('ViewerStage: the room scaled to the phone', () => {

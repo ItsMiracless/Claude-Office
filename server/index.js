@@ -2017,6 +2017,8 @@ app.get('/config', (_req, res) => {
     staff: staffFromConfig(config),
     configFile: file,
     version: VERSION,
+    // The online office takes `@<session> <prompt>` from its signed-in page (mayQueuePrompt)
+    remotePrompts: LOGIN_HEADER,
   })
 })
 
@@ -2228,7 +2230,8 @@ app.post('/event', requireToken, (req, res) => {
     return res.json({ ok: true, permissionId: permission.id, wait })
   }
 
-  // A Stop whose hook saw this session's prompt-queue marker: hand over the
+  // A Stop whose hook saw this session's prompt-queue marker (a remote hook:
+  // every Stop, nothing queued is the usual answer): hand over the
   // oldest queued chat prompt, with the proof the hook checks before it
   // prints anything (a squatter on the port cannot make one)
   if (sanitised.claim && sanitised.nonce && sanitised.sessionId) {
@@ -2333,13 +2336,20 @@ const PRIVILEGED_COMMANDS = new Set(['/clear'])
 // claims it (POST /event with claim, above) and Claude Code carries on with
 // it instead of stopping. server/prompt-queue.js has the whole flow.
 //
-// Who may queue (mayQueuePrompt): a caller holding the UI token (the office
-// page, from its trusted snapshot) or the office token (a local script) —
-// and never one that came in through the phone's full-mode LAN gate (its
-// requests carry the UI token after the hand-over, so lanAdmitted is checked
-// on its own), nor one that reached loopback through an HTTPS proxy name.
+// Who may queue (mayQueuePrompt): on loopback, a caller holding the UI token
+// (the office page, from its trusted snapshot) or the office token (a local
+// script). Never one that came in through the phone's full-mode LAN gate
+// (its requests carry the UI token after the hand-over, so lanAdmitted is
+// checked on its own). Through an HTTPS proxy name only the online office
+// (deploy/install-vps.sh, nginx) may, and only with all three of:
+//   - the UI token — the office page, nothing else holds it (no office
+//     token here: a hook's token must not turn into instructions)
+//   - `X-Office-Login: ok`, which nginx sets on POST /chat from a valid
+//     login cookie and drops when a client sends it; trusted only with
+//     AGENT_OFFICE_LOGIN_HEADER=1, which install-vps.sh sets with nginx
+//   - a loopback peer: the header is nginx's only on nginx's connection
 // A queued prompt becomes an instruction a Claude Code session acts on with
-// its permissions; that stays with the machine itself.
+// its permissions, so a remote one needs the signed-in office page.
 //
 // What the chat shows: the boss's line is stored as a transcript row
 // (msg_type 'prompt'), so read-only and LAN clients never get its text and
@@ -2354,17 +2364,21 @@ function systemLine(text) {
   return row
 }
 
+const LOGIN_HEADER = process.env.AGENT_OFFICE_LOGIN_HEADER === '1'
+
 /**
- * Whether this request may queue a prompt for a session: the office page on
- * this Mac (UI token) or a token holder, on loopback, not through the phone
- * gate or a proxy.
+ * Whether this request may queue a prompt for a session: on loopback the
+ * office page (UI token) or a token holder; through the proxy the signed-in
+ * office page (see above); never through the phone gate.
  * @param {import('express').Request} req
  * @returns {boolean}
  */
 function mayQueuePrompt(req) {
-  if (lanAdmitted.has(req) || isRemoteRequest(req)) return false
+  if (lanAdmitted.has(req)) return false
   const supplied = bearerToken(req)
-  return uiTokenMatches(supplied) || tokenMatches(supplied)
+  if (!isRemoteRequest(req)) return uiTokenMatches(supplied) || tokenMatches(supplied)
+  return LOGIN_HEADER && req.headers['x-office-login'] === 'ok'
+    && isLoopbackAddress(req.socket?.remoteAddress) && uiTokenMatches(supplied)
 }
 
 /**
@@ -2422,7 +2436,8 @@ function queuePromptFromChat(req, res, { sender, text, mention, found }) {
   const session = found.session
   const name = mentionName(session)
   if (!mayQueuePrompt(req)) {
-    systemLine(t('server.system.notTrusted', { name }))
+    const online = LOGIN_HEADER && !lanAdmitted.has(req) && isRemoteRequest(req)
+    systemLine(online ? t('server.system.notSignedIn', { name }) : t('server.system.notTrusted', { name }))
     console.warn(`[prompt-queue] Refused a prompt for ${name} from ${clampString(sender)}: not the trusted office page`)
     return unauthorized(res, { error: 'Queuing a prompt needs the office page on this machine' })
   }
@@ -5052,6 +5067,7 @@ export {
   AUTH_TOKEN,
   REUSED_TOKEN,
   UI_TOKEN,
+  mayQueuePrompt,
   RUNTIME_DIR,
   TOKEN_FILE,
   TOKEN_PATTERN,

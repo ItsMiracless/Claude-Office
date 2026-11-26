@@ -267,6 +267,89 @@ describe('POST /chat @<session>: queuing a prompt', () => {
   })
 })
 
+describe('POST /chat @<session> through the online office (nginx + login page)', () => {
+  // What nginx sends for `location = /chat` (deploy/install-vps.sh): the public
+  // Host, forwarding headers, and X-Office-Login only after a valid login cookie
+  const HOST = 'office.example.com'
+  let office: Office
+  const remote = (text: string, { token, login = true }: { token?: string; login?: boolean } = {}) => {
+    const req = request(office.server.app).post('/chat').set('Host', HOST).set('X-Forwarded-For', '203.0.113.7').set('X-Forwarded-Proto', 'https')
+    if (token) req.set('Authorization', `Bearer ${token}`)
+    if (login) req.set('X-Office-Login', 'ok')
+    return req.send({ sender: 'Boss', text })
+  }
+  const queued = () => office.server.promptQueue.list(SID).map(p => p.text)
+  const chatText = async () => JSON.stringify((await request(office.server.app).get('/chat')).body)
+
+  beforeAll(async () => {
+    office = await loadOffice({ env: { AGENT_OFFICE_ALLOWED_HOSTS: HOST, AGENT_OFFICE_LOGIN_HEADER: '1' } })
+    await postEvent(office.server, { type: 'session_started', ...ALPHA, source: 'startup' })
+  })
+  afterAll(() => removeOffice(office))
+
+  it('GET /config tells the page it may offer @-mentions', async () => {
+    expect((await request(office.server.app).get('/config')).body.remotePrompts).toBe(true)
+  })
+
+  it('without the login header: 401, nothing queued, the chat says to sign in', async () => {
+    const res = await remote('@alpha no cookie', { token: office.server.UI_TOKEN, login: false })
+    expect(res.status).toBe(401)
+    expect(queued()).toEqual([])
+    const text = await chatText()
+    expect(text).not.toContain('no cookie')
+    expect(text).toContain('Only the signed-in office page can queue a prompt for alpha')
+  })
+
+  it('with the login header but the office token, a wrong token or none: 401', async () => {
+    for (const token of [office.server.AUTH_TOKEN, 'nope', undefined]) {
+      expect((await remote('@alpha not the page', { token })).status, String(token)).toBe(401)
+    }
+    expect(queued()).toEqual([])
+  })
+
+  it('a non-loopback peer is refused even with the UI token and the header (only nginx on this machine sets it)', () => {
+    const req = { headers: { host: HOST, 'x-office-login': 'ok', authorization: `Bearer ${office.server.UI_TOKEN}` }, socket: { remoteAddress: '203.0.113.7' } }
+    expect(office.server.mayQueuePrompt(req as never)).toBe(false)
+    expect(office.server.mayQueuePrompt({ ...req, socket: { remoteAddress: '127.0.0.1' } } as never)).toBe(true)
+  })
+
+  it('the UI token + the login header + loopback (nginx): queued, with the usual limits', async () => {
+    const res = await remote('@alpha deploy the fix', { token: office.server.UI_TOKEN })
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ ok: true, queued: { sessionId: SID, position: 1 } })
+    expect(queued()).toEqual(['deploy the fix'])
+    expect((await remote(`@alpha ${'x'.repeat(MAX_PROMPT_LEN + 1)}`, { token: office.server.UI_TOKEN })).status).toBe(413)
+    for (let i = 2; i <= MAX_QUEUED_PER_SESSION; i++) expect((await remote(`@alpha step ${i}`, { token: office.server.UI_TOKEN })).status).toBe(200)
+    expect((await remote('@alpha one too many', { token: office.server.UI_TOKEN })).status).toBe(429)
+    office.server.promptQueue.drop(SID)
+  })
+
+  it('loopback stays as it was: the UI token or the office token, no login header needed', async () => {
+    const local = (token: string) => request(office.server.app).post('/chat').set('Authorization', `Bearer ${token}`).send({ sender: 'Boss', text: '@alpha local' })
+    expect((await local(office.server.UI_TOKEN)).status).toBe(200)
+    expect((await local(office.server.AUTH_TOKEN)).status).toBe(200)
+    expect((await request(office.server.app).post('/chat').send({ sender: 'Boss', text: '@alpha no token' })).status).toBe(401)
+    office.server.promptQueue.drop(SID)
+  })
+})
+
+describe('POST /chat @<session> through a proxy without AGENT_OFFICE_LOGIN_HEADER (tailscale serve)', () => {
+  let office: Office
+  beforeAll(async () => {
+    office = await loadOffice({ env: { AGENT_OFFICE_ALLOWED_HOSTS: 'my-mac.tail1234.ts.net' } })
+    await postEvent(office.server, { type: 'session_started', ...ALPHA, source: 'startup' })
+  })
+  afterAll(() => removeOffice(office))
+
+  it('a forged login header is not trusted: 401, and /config offers no @-mentions', async () => {
+    const res = await request(office.server.app).post('/chat').set('Host', 'my-mac.tail1234.ts.net').set('X-Forwarded-For', '100.64.0.2')
+      .set('X-Office-Login', 'ok').set('Authorization', `Bearer ${office.server.UI_TOKEN}`).send({ sender: 'Boss', text: '@alpha forged' })
+    expect(res.status).toBe(401)
+    expect(office.server.promptQueue.list(SID)).toEqual([])
+    expect((await request(office.server.app).get('/config')).body.remotePrompts).toBe(false)
+  })
+})
+
 describe('prompt-queue markers do not outlive the office', () => {
   it('clearMarkers (run when the server starts and stops) removes a marker an earlier run left', async () => {
     const office = await loadOffice()

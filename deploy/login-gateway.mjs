@@ -11,8 +11,12 @@
 //                       (/#token=…), so nobody needs the token link by hand
 //   GET  /logout        clear the cookie
 //   GET  /auth/check    204 with a valid session cookie, else 401
-//                       (?mode=redirect: a 302 to /login instead, for Caddy);
-//                       renews a permanent session's cookie once a day
+//                       (?mode=redirect: a 302 to /login instead, for Caddy;
+//                       ?mode=soft: always 204, with `X-Office-Login: ok`
+//                       only for a valid session — nginx passes that on for
+//                       POST /chat, see "Prompts from the chat" in
+//                       docs/reference.md); renews a permanent session's
+//                       cookie once a day
 //
 // The office's data routes and WebSocket are not behind this: they demand the
 // office token themselves. This only keeps the page away from strangers.
@@ -378,9 +382,14 @@ async function handle(req, res) {
       // Keep a permanent session alive: a fresh cookie at most once a day
       // (nginx passes it on with auth_request_set / add_header)
       const stale = SESSION_DAYS === 0 && !(typeof claims.iat === 'number' && Date.now() - claims.iat < RENEW_AFTER_MS)
-      res.writeHead(204, stale ? { 'Set-Cookie': setCookie(req, makeSession(login), COOKIE_MAX_AGE) } : {})
+      const headers = stale ? { 'Set-Cookie': setCookie(req, makeSession(login), COOKIE_MAX_AGE) } : {}
+      if (url.searchParams.get('mode') === 'soft') headers['X-Office-Login'] = 'ok'
+      res.writeHead(204, headers)
       return res.end()
     }
+    // Why 204 without a session: the soft check only tells the office who is
+    // signed in; token holders (hooks, scripts) keep reaching /chat without a cookie
+    if (url.searchParams.get('mode') === 'soft') { res.writeHead(204); return res.end() }
     if (url.searchParams.get('mode') === 'redirect') {
       const next = safeNext(req.headers['x-forwarded-uri'] || '/')
       res.writeHead(302, { Location: `/login?next=${encodeURIComponent(next)}`, 'Cache-Control': 'no-store' })

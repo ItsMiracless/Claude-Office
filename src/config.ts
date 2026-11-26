@@ -24,7 +24,7 @@
  */
 
 import { officeHttpBase } from './serverUrl'
-import { officeAuthHeaders } from './officeAuth'
+import { officeAuthHeaders, setRemotePrompts } from './officeAuth'
 import type { StaffMember } from '../shared/staff.js'
 
 // Shape of the optional office.config.json
@@ -157,6 +157,7 @@ export async function loadRuntimeConfig({
     const body = (await res.json()) as Partial<RuntimeConfig> | null
     if (!body || typeof body !== 'object' || !body.boss || typeof body.boss !== 'object') return null
     if (body.configFile) applyBossConfig(body.boss)
+    setRemotePrompts((body as { remotePrompts?: unknown }).remotePrompts === true)
     return {
       port: typeof body.port === 'number' ? body.port : 0,
       host: typeof body.host === 'string' ? body.host : '',
