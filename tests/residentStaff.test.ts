@@ -58,7 +58,7 @@ afterEach(() => { setStaffRoster(undefined) })
 describe('roster (shared/staff.js)', () => {
   it('defaults to the owner\'s eleven subagents, with Elaine as the team lead', () => {
     const list = getStaffRoster()
-    expect(list).toHaveLength(11)
+    expect(list).toHaveLength(12)
     expect(list.map(m => m.agentType)).toContain('pajak-riset-regulasi')
     expect(list.find(m => m.agentType === 'elaine')).toMatchObject({ name: 'Elaine', role: 'ai-engineer', manager: true })
     expect(list.find(m => m.agentType === 'airbnb-analis')).toMatchObject({ name: 'Valen', title: 'AirBNB' })
@@ -78,7 +78,7 @@ describe('roster (shared/staff.js)', () => {
   it('the server hands the same roster to the page (GET /config staff)', () => {
     expect(staffFromConfig({})).toEqual(getStaffRoster())
     expect(staffFromConfig({ staff: false })).toEqual([])
-    expect(defaultStaff()).toHaveLength(11)
+    expect(defaultStaff()).toHaveLength(12)
   })
 
   it('matches the hook\'s CUSTOM_AGENTS (names and roles), so the two cannot drift', () => {
@@ -100,7 +100,7 @@ describe('idle staff', () => {
   it('are all in the building from the start, idle, holding no desk and no session', () => {
     const s = office(ALL_ROOMS)
     const staff = s.agents.filter(a => a.staffType)
-    expect(staff).toHaveLength(11)
+    expect(staff).toHaveLength(12)
     for (const a of staff) {
       expect(isIdleStaff(a)).toBe(true)
       expect(a.id).toBe(staffAgentId(a.staffType!))
@@ -141,7 +141,7 @@ describe('idle staff', () => {
     let r = 0
     s = run(s, 240, now => env({ now, openRooms: ALL_ROOMS, random: () => ((r = (r * 9301 + 49297) % 233280) / 233280) }))
     const staff = s.agents.filter(a => a.staffType)
-    expect(staff).toHaveLength(11)
+    expect(staff).toHaveLength(12)
     expect(staff.every(isIdleStaff)).toBe(true)
     expect(staff.some(a => a.state === 'working')).toBe(false)
     expect(staff.filter(a => before.get(a.id) !== `${a.room}:${a.position.x},${a.position.y}`).length).toBeGreaterThan(5)
@@ -171,7 +171,7 @@ describe('idle staff', () => {
   it('are not reconciled away by a server snapshot that does not know them', () => {
     const s = office()
     const r = reduceOffice(s, { type: 'snapshot', activeAgents: [], sessions: [] } as never, env())
-    expect(r.state.agents.filter(isIdleStaff)).toHaveLength(11)
+    expect(r.state.agents.filter(isIdleStaff)).toHaveLength(12)
   })
 })
 
@@ -275,7 +275,7 @@ describe('called in, then back to the routine', () => {
     expect(isIdleStaff(s.agents.find(a => a.staffType === 'airbnb-analis')!)).toBe(false)
   })
 
-  it('a busy day of generic, repeated and stale workers still shows the boss, the 11 staff and the session\'s Claude', () => {
+  it('a busy day of generic, repeated and stale workers still shows the boss, the 12 staff and the session\'s Claude', () => {
     let s = reduceOffice(office(), session('s1'), env()).state
     const generic = ['general-purpose', 'Explore', 'Plan', 'fork', 'web-fetch', 'claude', 'claude-code-guide', 'caveman:cavecrew-investigator', 'statusline-setup']
     generic.forEach((t, i) => { s = reduceOffice(s, spawn(t, `g-${i}`), env()).state })
@@ -287,7 +287,7 @@ describe('called in, then back to the routine', () => {
         { id: 'll-0', name: 'Linglong', role: 'code-reviewer', task: 'audit', state: 'working', agentType: 'backend-senior-engineer', sessionId: 's1' }],
       sessions: [{ id: 's1', project: 'claude-workspace', state: 'active' }],
     } as never, env()).state
-    expect(s.agents).toHaveLength(1 + 11 + 1)
+    expect(s.agents).toHaveLength(1 + 12 + 1)
     expect(s.agents.filter(a => a.name === 'Linglong')).toHaveLength(1)
   })
 
